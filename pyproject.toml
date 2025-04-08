@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "terminal-agent"
+version = "0.1.0"
+description = "An AI-powered terminal agent with a beautiful UI"
+authors = ["Your Name <your.email@example.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+rich = "^13.7.0"
+typer = "^0.9.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api" 
