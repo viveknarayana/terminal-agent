@@ -5,7 +5,6 @@ app = typer.Typer()
 
 @app.command()
 def main():
-    """Launch the Terminal Agent"""
     ui = TerminalUI()
     ui.run()
 

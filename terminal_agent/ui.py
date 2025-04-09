@@ -1,15 +1,17 @@
+import asyncio
 from rich.console import Console
 from rich.panel import Panel
 from rich.layout import Layout
 from rich.markdown import Markdown
 from rich import box
 from rich.prompt import Prompt
+from rich.rule import Rule
 import os
 
 class TerminalUI:
     def __init__(self):
         self.console = Console()
-        self.messages = ["Type Below"]
+        self.messages = ["Welcome to Terminal Agent! Type your message below."]
         self.docker_messages = ["Docker Container Output"]
         self.layout = Layout()
         self.setup_layout()
@@ -22,9 +24,9 @@ class TerminalUI:
         )
 
     def display_terminal_panel(self):
-        content = "\n\n".join(self.messages)
+        content = "\n\n".join(self.messages) + "\n\nYou: "
         return Panel(
-            Markdown(content),
+            content,
             title="[bold blue]Terminal Interaction[/bold blue]",
             border_style="blue",
             box=box.ROUNDED,
@@ -42,7 +44,6 @@ class TerminalUI:
         )
 
     def run(self):
-        # Main UI loop
         while True:
             # Clear screen using os.system
             os.system('cls' if os.name == 'nt' else 'clear')
@@ -53,8 +54,7 @@ class TerminalUI:
             # Display layout once
             self.console.print(self.layout)
             
-            # Get input
-            user_input = Prompt.ask("\n[bold blue]You[/bold blue]")
+            user_input = input().strip()
             
             if user_input.lower() == "exit":
                 self.console.print("[yellow]Goodbye![/yellow]")
