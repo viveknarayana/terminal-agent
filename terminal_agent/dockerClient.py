@@ -1,6 +1,8 @@
 import docker
 import os
 
+# Create Docker client object in UI for agentic loop
+
 class DockerExecution:
 
     def __init__(self, baseURL):
