@@ -4,6 +4,7 @@ from rich.layout import Layout
 from rich.markdown import Markdown
 from rich import box
 from rich.prompt import Prompt
+import os
 
 class TerminalUI:
     def __init__(self):
@@ -43,14 +44,13 @@ class TerminalUI:
     def run(self):
         # Main UI loop
         while True:
-            # Clear screen
-            self.console.clear()
+            # Clear screen using os.system
+            os.system('cls' if os.name == 'nt' else 'clear')
             
-            # Update layout panels
             self.layout["terminal"].update(self.display_terminal_panel())
             self.layout["docker"].update(self.display_docker_panel())
             
-            # Display layout
+            # Display layout once
             self.console.print(self.layout)
             
             # Get input
