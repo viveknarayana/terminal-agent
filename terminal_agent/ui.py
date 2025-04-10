@@ -59,6 +59,11 @@ class TerminalUI:
             if user_input.lower() == "exit":
                 self.console.print("[yellow]Goodbye![/yellow]")
                 break
+
+            if user_input.lower() == "docker":
+                self.messages.extend([
+                f"Agent: Running test script in Docker"
+                ])
             
             # Update messages
             self.messages.extend([
