@@ -15,6 +15,7 @@ class TerminalUI:
         self.docker_messages = ["Docker Container Output"]
         self.layout = Layout()
         self.setup_layout()
+        self.docker_mode = False  # 
 
     def setup_layout(self):
         # Double layout for terminal and docker
@@ -34,7 +35,8 @@ class TerminalUI:
         )
 
     def display_docker_panel(self):
-        content = "\n\n".join(self.docker_messages)
+        mode_indicator = "[bold red](DOCKER INPUT MODE)[/bold red]\n\n" if self.docker_mode else ""
+        content = mode_indicator + "\n\n".join(self.docker_messages)
         return Panel(
             Markdown(content),
             title="[bold green]Docker Container[/bold green]",
@@ -43,30 +45,45 @@ class TerminalUI:
             padding=(1, 2)
         )
 
-    def run(self):
+    def run(self, docker_client=None):
         while True:
-            # Clear screen using os.system
             os.system('cls' if os.name == 'nt' else 'clear')
             
             self.layout["terminal"].update(self.display_terminal_panel())
             self.layout["docker"].update(self.display_docker_panel())
             
-            # Display layout once
             self.console.print(self.layout)
             
-            user_input = input().strip()
+            prompt = "Docker > " if self.docker_mode else "You: "
+            user_input = input(prompt).strip()
             
             if user_input.lower() == "exit":
-                self.console.print("[yellow]Goodbye![/yellow]")
-                break
+                if self.docker_mode:
+                    self.docker_mode = False
+                    self.messages.append("Agent: Exited Docker input mode")
+                    continue
+                else:
+                    self.console.print("[yellow]Goodbye![/yellow]")
+                    break
 
             if user_input.lower() == "docker":
+                self.docker_mode = True
                 self.messages.extend([
-                f"Agent: Running test script in Docker"
+                f"You: {user_input}",
+                f"Agent: Entering Docker input mode. Type 'exit' to return to normal mode."
                 ])
+                continue
             
-            # Update messages
-            self.messages.extend([
+            if self.docker_mode and docker_client and docker_client.container:
+                try:
+                    exit_code, output = docker_client.container.exec_run(f"/bin/bash -c '{user_input}'")
+                    result = output.decode('utf-8')
+                    self.docker_messages.append(f"$ {user_input}\n{result}")
+                except Exception as e:
+                    self.docker_messages.append(f"$ {user_input}\nError: {str(e)}")
+
+            elif not self.docker_mode:
+                self.messages.extend([
                 f"You: {user_input}",
                 f"Agent: I received your message: {user_input}"
-            ]) 
+                ])

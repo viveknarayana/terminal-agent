@@ -20,9 +20,16 @@ class DockerExecution:
 
         # Add tool to install dependencies as well
 
-    def copy_file(self, source_path):
-        # Code to copy test.py to container
-        pass
+    def write_file(self, file_path, content):
+        if not self.container:
+            raise RuntimeError("Container not started. Call start_container() first.")
+
+        cmd = f'sh -c "cat > {file_path}"'
+        _, socket = self.container.exec_run(
+            cmd, stdin=True, stdout=True, stderr=True, stream=False, socket=True
+        )
+        socket._sock.sendall((content + "\n").encode("utf-8"))
+        socket._sock.close()
     
     def run_file(self, file_name):
         # Code to run test.py inside the container
