@@ -6,7 +6,9 @@ from rich.markdown import Markdown
 from rich import box
 from rich.prompt import Prompt
 from rich.rule import Rule
+from .dockerClient import DockerExecution
 import os
+
 
 class TerminalUI:
     def __init__(self):
@@ -45,7 +47,10 @@ class TerminalUI:
             padding=(1, 2)
         )
 
-    def run(self, docker_client=None):
+    def run(self):
+        docker_client = DockerExecution()
+        docker_client.start_container()
+        self.docker_messages.append("Starting Docker container...")
         while True:
             os.system('cls' if os.name == 'nt' else 'clear')
             

@@ -5,7 +5,7 @@ import os
 
 class DockerExecution:
 
-    def __init__(self, baseURL):
+    def __init__(self):
         self.client = client = docker.from_env()
         self.container = None
 
