@@ -20,7 +20,7 @@ class TerminalUI:
         self.layout = Layout()
         self.setup_layout()
         self.docker_mode = False  # 
-        self.agent = AIAgent()
+        self.agent = None
 
     def setup_layout(self):
         # Double layout for terminal and docker
@@ -53,6 +53,7 @@ class TerminalUI:
     async def run(self):
         docker_client = DockerExecution()
         docker_client.start_container()
+        self.agent = AIAgent(docker_client)
         self.docker_messages.append("Starting Docker container...")
         while True:
             #os.system('cls' if os.name == 'nt' else 'clear')
@@ -101,5 +102,8 @@ class TerminalUI:
                 f"You: {user_input}",
                 f"Agent: {response['response_text']}"
                 ])
+
+                if response.get('docker_output'):
+                    self.docker_messages.append(f"Tool execution: \n{response['docker_output']}")
 
         
