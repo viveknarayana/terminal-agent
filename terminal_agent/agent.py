@@ -1,11 +1,14 @@
 import os
+from dotenv import load_dotenv
 from anthropic import Anthropic
 from typing import List, Dict, Any
 
+load_dotenv()
+
 class AIAgent:
-    def __init__(self, api_key=None):
-        self.anthropic = Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
-        print(self.anthropic)
+    def __init__(self):
+        self.anthropic = Anthropic()
+        #print("HELLO ", os.environ.get("ANTHROPIC_API_KEY"))
         # It should have its own conversation history in case I want to pass back
         self.conversation_history = []
         self.system_prompt = """You are a helpful terminal assistant with access to a Docker container.

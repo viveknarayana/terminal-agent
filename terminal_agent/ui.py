@@ -7,6 +7,8 @@ from rich import box
 from rich.prompt import Prompt
 from rich.rule import Rule
 from .dockerClient import DockerExecution
+from .agent import AIAgent
+import asyncio
 import os
 
 
@@ -18,6 +20,7 @@ class TerminalUI:
         self.layout = Layout()
         self.setup_layout()
         self.docker_mode = False  # 
+        self.agent = AIAgent()
 
     def setup_layout(self):
         # Double layout for terminal and docker
@@ -47,12 +50,12 @@ class TerminalUI:
             padding=(1, 2)
         )
 
-    def run(self):
+    async def run(self):
         docker_client = DockerExecution()
         docker_client.start_container()
         self.docker_messages.append("Starting Docker container...")
         while True:
-            os.system('cls' if os.name == 'nt' else 'clear')
+            #os.system('cls' if os.name == 'nt' else 'clear')
             
             self.layout["terminal"].update(self.display_terminal_panel())
             self.layout["docker"].update(self.display_docker_panel())
@@ -90,7 +93,13 @@ class TerminalUI:
                     self.docker_messages.append(f"$ {user_input}\nError: {str(e)}")
 
             elif not self.docker_mode:
+                # get anthropic response
+                response = await self.agent.process_input(user_input)
+
+
                 self.messages.extend([
                 f"You: {user_input}",
-                f"Agent: I received your message: {user_input}"
+                f"Agent: {response['response_text']}"
                 ])
+
+        
