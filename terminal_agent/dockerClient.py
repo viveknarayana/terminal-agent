@@ -10,15 +10,32 @@ class DockerExecution:
         self.container = None
 
     def start_container(self):
-        self.container = self.client.containers.run(
-            image="python:3.10-slim",
-            command="sleep infinity",
-            detach=True,
-            tty=True,
-            name="terminal-agent-container"
-        )
+        # checks if already exists
+        try:
+            existing_container = self.client.containers.get("terminal-agent-container")
+            
+            if existing_container.status == "running":
+                self.container = existing_container
+            else:
+                print("Container exists but is not running. Removing and creating a new one.")
+                existing_container.remove(force=True)
+                self.container = self.client.containers.run(
+                    image="python:3.10-slim",
+                    command="sleep infinity",
+                    detach=True,
+                    tty=True,
+                    name="terminal-agent-container"
+                )
+        except docker.errors.NotFound:
+            self.container = self.client.containers.run(
+                image="python:3.10-slim",
+                command="sleep infinity",
+                detach=True,
+                tty=True,
+                name="terminal-agent-container"
+            )
 
-        # Add tool to install dependencies as well
+            # Add tool to install dependencies as well
 
     def write_file(self, file_path, content):
         if not self.container:
