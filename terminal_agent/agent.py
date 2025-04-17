@@ -34,6 +34,23 @@ class AIAgent:
                         "required": ["file_name", "content"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "run_python_file",
+                    "description": "Run a Python file in the Docker container",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_name": {
+                                "type": "string",
+                                "description": "Name of the Python file to run (e.g., 'test.py')"
+                            }
+                        },
+                        "required": ["file_name"]
+                    }
+                }
             }
         ]
     
@@ -41,8 +58,11 @@ class AIAgent:
         self.system_prompt = """You are a helpful terminal assistant with access to a Docker container.
         You can help users by having conversations and executing commands in the container when needed.
         When the user asks you to create Python files, use the create_python_file tool to write the code to the Docker container.
+        After creating a Python file, you can run it using the run_python_file tool to execute the code and see the output.
         
-        For example, if a user asks you to create a simple hello world script, you can use create_python_file to write a Python file with print("Hello World")."""
+        For example, if a user asks you to create and run a simple hello world script, you can:
+        1. Use create_python_file to write a Python file with print("Hello World")
+        2. Use run_python_file to execute the script and show the output"""
     
     def add_message(self, role: str, content: str):
         self.conversation_history.append({"role": role, "content": content})
@@ -102,6 +122,17 @@ class AIAgent:
                         "role": "tool",
                         "name": function_name,
                         "content": function_response
+                    })
+                elif function_name == "run_python_file":
+                    function_response = self.run_python_file(
+                        file_name=function_args.get("file_name")
+                    )
+                    
+                    self.conversation_history.append({
+                        "tool_call_id": tool_call.id,
+                        "role": "tool",
+                        "name": function_name,
+                        "content": json.dumps(function_response)
                     })
             
             # Get final response after tool use
