@@ -40,13 +40,19 @@ class DockerExecution:
     def write_file(self, file_path, content):
         if not self.container:
             raise RuntimeError("Container not started. Call start_container() first.")
-
-        cmd = f'sh -c "cat > {file_path}"'
-        _, socket = self.container.exec_run(
-            cmd, stdin=True, stdout=True, stderr=True, stream=False, socket=True
-        )
-        socket._sock.sendall((content + "\n").encode("utf-8"))
-        socket._sock.close()
+        
+        # base64 fixed quotation issues
+        import base64
+        encoded_content = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+        
+        # Create the file using base64 decoding because it didn't work without for some reason
+        cmd = f'bash -c "echo {encoded_content} | base64 -d > {file_path}"'
+        exit_code, output = self.container.exec_run(cmd)
+        
+        if exit_code != 0:
+            raise RuntimeError(f"Failed to write file: {output.decode('utf-8')}")
+        
+        return True
     
     def run_file(self, file_name):
         # Code to run test.py inside the container
