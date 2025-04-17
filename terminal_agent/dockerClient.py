@@ -52,12 +52,23 @@ class DockerExecution:
         if exit_code != 0:
             raise RuntimeError(f"Failed to write file: {output.decode('utf-8')}")
         
-        return True
+        return 
     
     def run_file(self, file_name):
-        # Code to run test.py inside the container
-        # Call when receive command from Terminal Interaction
-        pass
+        if not self.container:
+            raise RuntimeError("Container not started. Call start_container() first.")
+        
+        if file_name.endswith('.py'):
+            cmd = f"python {file_name}"
+        else:
+            cmd = f"./{file_name}"
+        
+        exit_code, output = self.container.exec_run(cmd)
+        
+        return {
+            'exit_code': exit_code,
+            'output': output.decode('utf-8')
+        }
 
     def end_container(self):
         pass
