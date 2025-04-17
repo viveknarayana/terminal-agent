@@ -51,10 +51,10 @@ class AIAgent:
     def create_python_file(self, file_name, content):
         if self.docker_client:
             try:
-                self.docker_client.write_file(f"/app/{file_name}", content)
-                return "Worked"
+                result = self.docker_client.write_file(f"{file_name}", content)
+                return f"File {file_name} created successfully"
             except Exception as e:
-                return "Error"
+                return f"Error: {str(e)}"
         return "Docker client not available."
     
     async def process_input(self, user_input: str):
