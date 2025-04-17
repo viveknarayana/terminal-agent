@@ -47,15 +47,25 @@ class AIAgent:
     def add_message(self, role: str, content: str):
         self.conversation_history.append({"role": role, "content": content})
     
-    # TOOL DEFINITIONS
+    # TOOL DEFINITIONS - uses dockerClient tools
     def create_python_file(self, file_name, content):
         if self.docker_client:
             try:
-                result = self.docker_client.write_file(f"{file_name}", content)
+                self.docker_client.write_file(f"{file_name}", content)
                 return f"File {file_name} created successfully"
             except Exception as e:
                 return f"Error: {str(e)}"
         return "Docker client not available."
+    
+    def run_python_file(self, file_name):
+        if self.docker_client:
+            try: 
+                output = self.docker_client.run_file(file_name)
+                return output
+            except Exception as e:
+                return f"Error: {str(e)}"
+        return "Docker client not available."
+
     
     async def process_input(self, user_input: str):
         self.add_message("user", user_input)
