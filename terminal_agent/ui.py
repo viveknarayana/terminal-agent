@@ -56,7 +56,7 @@ class TerminalUI:
         self.agent = AIAgent(docker_client)
         self.docker_messages.append("Starting Docker container...")
         while True:
-            #os.system('cls' if os.name == 'nt' else 'clear')
+            os.system('cls' if os.name == 'nt' else 'clear')
             
             self.layout["terminal"].update(self.display_terminal_panel())
             self.layout["docker"].update(self.display_docker_panel())
