@@ -97,13 +97,13 @@ class TerminalUI:
                 # get anthropic response
                 response = await self.agent.process_input(user_input)
 
-
-                self.messages.extend([
-                f"You: {user_input}",
-                f"Agent: {response['response_text']}"
-                ])
-
                 if response.get('docker_output'):
                     self.docker_messages.append(f"Tool execution: \n{response['docker_output']}")
+                else:
+                    self.messages.extend([
+                        f"You: {user_input}",
+                        f"Agent: {response['response_text']}"
+                        ])
+
 
         
