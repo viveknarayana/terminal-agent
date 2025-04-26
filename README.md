@@ -2,5 +2,5 @@
 
 Agentic Loop capable of running code in your terminal - WIP
 
-- Eventually itegrate more agentic capabilities than running code
+- Currently capable of creating and running python scripts within docker container
 - poetry run python -m terminal_agent    
