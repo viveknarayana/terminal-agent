@@ -4,6 +4,8 @@ from groq import Groq
 from typing import List, Dict, Any
 import json
 
+# Maybe convert to Cerebras for faster inference
+
 load_dotenv()
 
 class AIAgent:
