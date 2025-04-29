@@ -157,8 +157,17 @@ class AIAgent:
                         "name": function_name,
                         "content": json.dumps(function_response)
                     })
+                elif function_name == "list_files":
+                    function_response = self.list_files()
+                    
+                    self.conversation_history.append({
+                        "tool_call_id": tool_call.id,
+                        "role": "tool",
+                        "name": function_name,
+                        "content": json.dumps(function_response)
+                    })
             
-            # Get final response after tool use
+            # Get final response after tool use if any data was fetched
             second_response = self.groq.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "system", "content": self.system_prompt}] + self.conversation_history
