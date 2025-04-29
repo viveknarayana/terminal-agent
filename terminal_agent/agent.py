@@ -53,6 +53,18 @@ class AIAgent:
                         "required": ["file_name"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_files",
+                    "description": "List all the current files in the Docker container",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [""]
+                    }
+                }
             }
         ]
     
