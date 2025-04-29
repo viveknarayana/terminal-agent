@@ -176,6 +176,9 @@ class AIAgent:
             response_content = second_response.choices[0].message.content
             self.add_message("assistant", response_content)
             
+            # MAKE THE FUNCTION RESPONSE LOOK NICER AND ALSO FIX LIST_FILES TOOL 
+            # SOMETIMES DOESN'T CALL PROPERLY
+
             return {
                 "response_text": response_content,
                 "docker_output": function_response if tool_calls else None
