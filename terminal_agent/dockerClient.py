@@ -9,6 +9,14 @@ class DockerExecution:
         self.client = client = docker.from_env()
         self.container = None
 
+    def list_files(self):
+        if not self.container:
+            raise RuntimeError("Container not started. Call start_container() first.")
+        
+        # listing files
+        exec_result = self.container.exec_run(f"ls")
+        return exec_result.output.decode('utf-8')
+
     def start_container(self):
         # checks if already exists
         try:
