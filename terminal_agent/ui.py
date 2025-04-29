@@ -86,7 +86,6 @@ class TerminalUI:
             if self.docker_mode and docker_client and docker_client.container:
                 try:
                     # KEEP THIS FOR USER TO ACCESS DOCKER CONTAINER WITHOUT USE OF AGENT (check files and stuff)
-                    # TMR ADD MORE TOOLS IN DOCKER FILE AND FORMAT IT SO ITS USABLE WITH ANTHROPICSDK
                     exit_code, output = docker_client.container.exec_run(f"/bin/bash -c '{user_input}'")
                     result = output.decode('utf-8')
                     self.docker_messages.append(f"$ {user_input}\n{result}")
@@ -94,7 +93,7 @@ class TerminalUI:
                     self.docker_messages.append(f"$ {user_input}\nError: {str(e)}")
 
             elif not self.docker_mode:
-                # get anthropic response
+                # get ai response
                 response = await self.agent.process_input(user_input)
 
                 if response.get('docker_output'):
