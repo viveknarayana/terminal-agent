@@ -82,6 +82,15 @@ class AIAgent:
         self.conversation_history.append({"role": role, "content": content})
     
     # TOOL DEFINITIONS - uses dockerClient tools
+    def list_files(self):
+        if self.docker_client:
+            try:
+                files = self.docker_client.list_files()
+                return files
+            except Exception as e:
+                return f"Error: {str(e)}"
+        return "Docker client not available."
+
     def create_python_file(self, file_name, content):
         if self.docker_client:
             try:
