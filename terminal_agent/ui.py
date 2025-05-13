@@ -114,7 +114,7 @@ class TerminalUI:
         self.agent = AIAgent(docker_client)
         self.docker_messages.append("Docker Container Output")
         while True:
-            os.system('cls' if os.name == 'nt' else 'clear')
+            #os.system('cls' if os.name == 'nt' else 'clear')
             self.layout["terminal"].update(self.display_terminal_panel())
             self.layout["docker"].update(self.display_docker_panel())
             self.console.print(self.layout)

@@ -69,7 +69,6 @@ class AIAgent:
         ]
     
         self.conversation_history = []
-        self.system_prompt_short = 'You are an AI terminal agent. Help the user with coding and terminal tasks in a Docker container. Be concise.'
         self.system_prompt_long = '''
 You are an AI terminal agent with direct access to a Docker container and the ability to:
 - Create, edit, and list files in the container
@@ -148,7 +147,23 @@ Could you please provide more details about [specific aspect of the request]? Th
 Throughout this process, maintain clear communication with the user, explaining your thoughts and actions. If you encounter any issues or need additional information, always ask for clarification.
 
 Remember to adhere to best practices in software development, including writing clean, maintainable code, proper error handling, and following language-specific conventions.
+
+If the user requests running multiple files, call the appropriate tool for each file, one at a time, until all requested files have been processed.
 '''
+        self.system_prompt_short = '''You are an AI terminal agent. Help the user with coding and terminal tasks in a Docker container. Be concise.
+
+You have access to the following tools:
+- create_python_file: Create a Python file in the Docker container.
+- run_python_file: Run a Python file in the Docker container.
+- list_files: List all the current files in the Docker container.
+
+You can use these tools in succession to accomplish multi-step tasks (for example, create a file and then run it). After each tool call, you will receive the output and can decide on the next action, up to a maximum of 3 iterations per input. You may only call one tool at a time. Use the most recent tool output to inform your next tool call.
+
+When using the `run_python_file` tool, you must only attempt to run files that actually exist in the container, as shown by the output of the `list_files` tool. Do not guess file names.
+
+After you receive the output of a tool, if it answers the user's request, respond to the user in natural language. Only call another tool if more information or action is needed.
+
+If the user asks to list files, call the `list_files` tool once, then respond to the user with the file list. Do not call any other tools unless the user requests further action.'''
         self.system_prompt = self.system_prompt_short
     
     def add_message(self, role: str, content: str):
@@ -184,82 +199,133 @@ Remember to adhere to best practices in software development, including writing 
 
     
     async def process_input(self, user_input: str):
-        self.add_message("user", user_input)
-        
-        messages = [{"role": "system", "content": self.system_prompt}] + self.conversation_history
+        # Always keep the original user prompt
+        original_prompt = {"role": "user", "content": user_input}
+        tool_history = []  # Only tool call/response pairs for this session
+        max_loops = 3
+        loop_count = 0
+        tool_outputs = []
+        final_response_content = None
 
-        response = self.groq.chat.completions.create(
-            model=self.model, 
-            messages=messages, 
-            stream=False,
-            tools=self.tools,
-            tool_choice="auto",
-            max_completion_tokens=4096
-        )
-
-        response_message = response.choices[0].message
-        
-        # Process tool calls if any
-        tool_calls = response_message.tool_calls
-        
-        if tool_calls:
-            for tool_call in tool_calls:
+        while loop_count < max_loops:
+            print(f"[DEBUG] Agentic loop iteration: {loop_count+1}")
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                original_prompt,
+                *tool_history
+            ]
+            response = self.groq.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                stream=False,
+                tools=self.tools,
+                tool_choice="auto",
+                max_completion_tokens=4096
+            )
+            response_message = response.choices[0].message
+            tool_calls = response_message.tool_calls
+            if tool_calls:
+                tool_call = tool_calls[0]
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
-                
+                print(f"[DEBUG] Tool call: {function_name} with args: {function_args}")
                 if function_name == "create_python_file":
                     function_response = self.create_python_file(
                         file_name=function_args.get("file_name"),
                         content=function_args.get("content")
                     )
-                    
-                    self.conversation_history.append({
-                        "tool_call_id": tool_call.id,
-                        "role": "tool",
-                        "name": function_name,
-                        "content": function_response
-                    })
                 elif function_name == "run_python_file":
                     function_response = self.run_python_file(
                         file_name=function_args.get("file_name")
                     )
-                    
-                    self.conversation_history.append({
-                        "tool_call_id": tool_call.id,
-                        "role": "tool",
-                        "name": function_name,
-                        "content": json.dumps(function_response)
-                    })
                 elif function_name == "list_files":
                     function_response = self.list_files()
-                    
-                    self.conversation_history.append({
-                        "tool_call_id": tool_call.id,
-                        "role": "tool",
-                        "name": function_name,
-                        "content": json.dumps(function_response)
-                    })
-            
-            # Get final response after tool use if any data was fetched
-            second_response = self.groq.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "system", "content": self.system_prompt}] + self.conversation_history
-            )
-            
-            response_content = second_response.choices[0].message.content
-            self.add_message("assistant", response_content)
-            
-            # MAKE THE FUNCTION RESPONSE LOOK NICER AND ALSO FIX LIST_FILES TOOL 
-            # SOMETIMES DOESN'T CALL PROPERLY
+                    # Try to parse the output and format as a readable list
+                    if isinstance(function_response, str):
+                        files = [f for f in function_response.strip().splitlines() if f]
+                    elif isinstance(function_response, list):
+                        files = function_response
+                    else:
+                        files = []
+                    formatted = "The following files are present in the Docker container:\n" + "\n".join(f"- {f}" for f in files)
+                    tool_content = formatted
+                else:
+                    function_response = f"Unknown tool: {function_name}"
+                    tool_content = str(function_response)
 
-            return {
-                "response_text": response_content,
-                "docker_output": function_response if tool_calls else None
-            }
-        else:
-            # No tool calls, just return the response
-            self.add_message("assistant", response_message.content)
-            return {
-                "response_text": response_message.content,
-                "docker_output": None
-            }
+                if function_name != "list_files":
+                    tool_content = str(function_response)
+
+                tool_outputs.append({
+                    "tool": function_name,
+                    "args": function_args,
+                    "output": tool_content
+                })
+                # Add this tool call/response to tool_history for next loop
+                tool_history.append({
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": tool_content
+                })
+                loop_count += 1
+
+                # Reprompt the LLM after tool call to allow for normal response or further chaining
+                messages = [
+                    {"role": "system", "content": self.system_prompt},
+                    original_prompt,
+                    *tool_history
+                ]
+                response = self.groq.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    stream=False,
+                    tools=self.tools,
+                    tool_choice="auto",
+                    max_completion_tokens=4096
+                )
+                response_message = response.choices[0].message
+                tool_calls = response_message.tool_calls
+                if not tool_calls:
+                    # LLM is done, return its message as the final answer
+                    final_response_content = response_message.content
+                    tool_history.append({
+                        "role": "assistant",
+                        "content": final_response_content
+                    })
+                    print(f"[DEBUG] LLM finished after tool call at iteration {loop_count}.")
+                    break
+                # Otherwise, continue chaining tools
+                continue
+            else:
+                # No tool calls, just return the response as normal
+                final_response_content = response_message.content
+                print(f"[DEBUG] No tool calls. Exiting loop at iteration {loop_count+1}.")
+                break
+
+        if final_response_content is None:
+            print(f"[DEBUG] Max loop count reached. Fetching final LLM response.")
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                original_prompt,
+                *tool_history
+            ]
+            response = self.groq.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                stream=False,
+                tools=self.tools,
+                tool_choice="auto",
+                max_completion_tokens=4096
+            )
+            final_response_content = response.choices[0].message.content
+        # Fallback: if still no assistant message, return last tool output
+        if final_response_content is None and tool_outputs:
+            final_response_content = tool_outputs[-1]["output"]
+
+        print(f"[DEBUG] Final response: {final_response_content}")
+        return {
+            "response_text": final_response_content,
+            "docker_output": tool_outputs[-1]["output"] if tool_outputs else None,
+            "all_tool_outputs": tool_outputs
+        }
