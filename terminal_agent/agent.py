@@ -3,8 +3,6 @@ from dotenv import load_dotenv
 from groq import Groq
 from typing import List, Dict, Any
 import json
-import re
-from cerebras.cloud.sdk import Cerebras
 
 # Maybe convert to Cerebras for faster inference
 
@@ -12,23 +10,17 @@ load_dotenv()
 
 class AIAgent:
     def __init__(self, docker_client):
-        # self.groq = Groq()
-        # self.model = 'llama-3.3-70b-versatile'
+        self.groq = Groq()
+        self.model = 'llama-3.3-70b-versatile'
         self.docker_client = docker_client
-
-        # Cerebras client
-        self.cerebras_client = Cerebras(
-            api_key=os.environ.get("CEREBRAS_API_KEY"),
-        )
-        self.cerebras_model = "llama-4-scout-17b-16e-instruct"
-
+        
+        
         self.tools = [
             {
                 "type": "function",
                 "function": {
                     "name": "create_python_file",
-                    "strict": True,
-                    "description": "Create a Python file in the Docker container.",
+                    "description": "Create a Python file in the Docker container",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -49,7 +41,6 @@ class AIAgent:
                 "type": "function",
                 "function": {
                     "name": "run_python_file",
-                    "strict": True,
                     "description": "Run a Python file in the Docker container",
                     "parameters": {
                         "type": "object",
@@ -67,19 +58,19 @@ class AIAgent:
                 "type": "function",
                 "function": {
                     "name": "list_files",
-                    "strict": True,
                     "description": "List all the current files in the Docker container",
                     "parameters": {
                         "type": "object",
                         "properties": {},
-                        "required": []
+                        "required": [""]
                     }
                 }
             }
         ]
     
         self.conversation_history = []
-        self.system_prompt = '''
+        self.system_prompt_short = 'You are an AI terminal agent. Help the user with coding and terminal tasks in a Docker container. Be concise.'
+        self.system_prompt_long = '''
 You are an AI terminal agent with direct access to a Docker container and the ability to:
 - Create, edit, and list files in the container
 - Run Python scripts and shell commands
@@ -158,6 +149,7 @@ Throughout this process, maintain clear communication with the user, explaining 
 
 Remember to adhere to best practices in software development, including writing clean, maintainable code, proper error handling, and following language-specific conventions.
 '''
+        self.system_prompt = self.system_prompt_short
     
     def add_message(self, role: str, content: str):
         self.conversation_history.append({"role": role, "content": content})
@@ -193,74 +185,81 @@ Remember to adhere to best practices in software development, including writing 
     
     async def process_input(self, user_input: str):
         self.add_message("user", user_input)
+        
         messages = [{"role": "system", "content": self.system_prompt}] + self.conversation_history
 
-        function_response = None
-        final_response_content = None
+        response = self.groq.chat.completions.create(
+            model=self.model, 
+            messages=messages, 
+            stream=False,
+            tools=self.tools,
+            tool_choice="auto",
+            max_completion_tokens=4096
+        )
 
-        print("Conversation history:", json.dumps(messages, indent=2))
-        print("Calling Cerebras...")
-        try:
-            response = self.cerebras_client.chat.completions.create(
-                model=self.cerebras_model,
-                messages=messages,
-                tools=self.tools,
-                parallel_tool_calls=False,
-            )
-        except Exception as e:
-            print("Cerebras API error:", e)
-            return {
-                "response_text": None,
-                "docker_output": None
-            }
-        print("Cerebras responded.")
         response_message = response.choices[0].message
-        print("Response message:", response_message)
+        
+        # Process tool calls if any
         tool_calls = response_message.tool_calls
-        print("Tool calls:", tool_calls)
-
+        
         if tool_calls:
-            tool_call = tool_calls[0]
-            function_name = tool_call.function.name
-            function_args = json.loads(tool_call.function.arguments)
-            if function_name == "create_python_file":
-                function_response = self.create_python_file(
-                    file_name=function_args.get("file_name"),
-                    content=function_args.get("content")
-                )
-            elif function_name == "run_python_file":
-                function_response = self.run_python_file(
-                    file_name=function_args.get("file_name")
-                )
-            elif function_name == "list_files":
-                function_response = self.list_files()
-            # Always append tool result as a string, immediately after the assistant/tool call message
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": str(function_response)
-            })
-            # Request the final response from the model, now that it has the tool result
-            try:
-                final_response = self.cerebras_client.chat.completions.create(
-                    model=self.cerebras_model,
-                    messages=messages,
-                )
-                final_response_content = final_response.choices[0].message.content
-                self.add_message("assistant", final_response_content)
-                print("Returning response:", final_response_content)
-            except Exception as e:
-                print("Cerebras API error (final response):", e)
-                final_response_content = None
+            for tool_call in tool_calls:
+                function_name = tool_call.function.name
+                function_args = json.loads(tool_call.function.arguments)
+                
+                if function_name == "create_python_file":
+                    function_response = self.create_python_file(
+                        file_name=function_args.get("file_name"),
+                        content=function_args.get("content")
+                    )
+                    
+                    self.conversation_history.append({
+                        "tool_call_id": tool_call.id,
+                        "role": "tool",
+                        "name": function_name,
+                        "content": function_response
+                    })
+                elif function_name == "run_python_file":
+                    function_response = self.run_python_file(
+                        file_name=function_args.get("file_name")
+                    )
+                    
+                    self.conversation_history.append({
+                        "tool_call_id": tool_call.id,
+                        "role": "tool",
+                        "name": function_name,
+                        "content": json.dumps(function_response)
+                    })
+                elif function_name == "list_files":
+                    function_response = self.list_files()
+                    
+                    self.conversation_history.append({
+                        "tool_call_id": tool_call.id,
+                        "role": "tool",
+                        "name": function_name,
+                        "content": json.dumps(function_response)
+                    })
+            
+            # Get final response after tool use if any data was fetched
+            second_response = self.groq.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": self.system_prompt}] + self.conversation_history
+            )
+            
+            response_content = second_response.choices[0].message.content
+            self.add_message("assistant", response_content)
+            
+            # MAKE THE FUNCTION RESPONSE LOOK NICER AND ALSO FIX LIST_FILES TOOL 
+            # SOMETIMES DOESN'T CALL PROPERLY
+
+            return {
+                "response_text": response_content,
+                "docker_output": function_response if tool_calls else None
+            }
         else:
             # No tool calls, just return the response
-            final_response_content = response_message.content
-            self.add_message("assistant", final_response_content)
-            print("Returning response:", final_response_content)
-
-        return {
-            "response_text": final_response_content,
-            "docker_output": function_response
-        }
-
-    # (Keep the Groq code commented out for reference)
+            self.add_message("assistant", response_message.content)
+            return {
+                "response_text": response_message.content,
+                "docker_output": None
+            }
