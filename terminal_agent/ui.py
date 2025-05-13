@@ -140,13 +140,15 @@ class TerminalUI:
                     exit_code, output = docker_client.container.exec_run(f"/bin/bash -c '{user_input}'")
                     result = output.decode('utf-8')
                     self.docker_messages.append(f"$ {user_input}\n{result}")
+                    self.messages.append(f"You: {user_input}")
                 except Exception as e:
                     self.docker_messages.append(f"$ {user_input}\nError: {str(e)}")
+                    self.messages.append(f"You: {user_input}")
             elif not self.docker_mode:
                 response = await self.agent.process_input(user_input)
                 tool_output = response.get('docker_output')
+                self.messages.append(f"You: {user_input}")
                 if tool_output:
-                    
                     if isinstance(tool_output, dict) and 'exit_code' in tool_output:
                         panel = self.format_tool_panel(
                             "RunCommand",
@@ -158,10 +160,7 @@ class TerminalUI:
                     else:
                         self.docker_messages.append(("panel", self.format_tool_panel("Tool", {}, str(tool_output))))
                 else:
-                    self.messages.extend([
-                        f"You: {user_input}",
-                        f"Agent: {response['response_text']}"
-                    ])
+                    self.messages.append(f"Agent: {response['response_text']}")
 
 
         
