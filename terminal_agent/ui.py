@@ -18,6 +18,9 @@ from rich.table import Table
 # Go into that and make some changes to format responses better with regards to docker output and confirmation that tool ran
 # agent.py convo history has tool calls + responses 
 
+MAX_TERMINAL_MESSAGES = 8
+MAX_DOCKER_MESSAGES = 8
+
 class TerminalUI:
     def __init__(self):
         self.console = Console()
@@ -36,7 +39,7 @@ class TerminalUI:
         )
 
     def display_terminal_panel(self):
-        content = "\n\n".join(self.messages) + "\n\nYou: "
+        content = "\n\n".join(self.messages[-MAX_TERMINAL_MESSAGES:]) + "\n\nYou: "
         return Panel(
             content,
             title="[bold blue]Terminal Interaction[/bold blue]",
@@ -50,7 +53,7 @@ class TerminalUI:
         rendered = []
         if mode_indicator:
             rendered.append(Markdown(mode_indicator))
-        for msg in self.docker_messages:
+        for msg in self.docker_messages[-MAX_DOCKER_MESSAGES:]:
             if isinstance(msg, tuple) and msg[0] == "panel":
                 rendered.append(msg[1])
             else:
@@ -136,8 +139,7 @@ class TerminalUI:
                 try:
                     exit_code, output = docker_client.container.exec_run(f"/bin/bash -c '{user_input}'")
                     result = output.decode('utf-8')
-                    panel = self.format_docker_output(user_input, result, exit_code)
-                    self.docker_messages.append(("panel", panel))
+                    self.docker_messages.append(f"$ {user_input}\n{result}")
                 except Exception as e:
                     self.docker_messages.append(f"$ {user_input}\nError: {str(e)}")
             elif not self.docker_mode:
