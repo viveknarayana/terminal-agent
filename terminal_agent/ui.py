@@ -1,5 +1,5 @@
 import asyncio
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.layout import Layout
 from rich.markdown import Markdown
@@ -53,6 +53,36 @@ class TerminalUI:
             box=box.ROUNDED,
             padding=(1, 2)
         )
+
+    def format_tool_execution(self, tool_output):
+        # If it's a dict with exit_code and output, format nicely
+        if isinstance(tool_output, dict) and 'exit_code' in tool_output and 'output' in tool_output:
+            exit_code = tool_output['exit_code']
+            output = tool_output['output']
+            exit_status = (
+                f"[green]Exit code: {exit_code}[/green]" if exit_code == 0
+                else f"[red]Exit code: {exit_code}[/red]"
+            )
+            # If output looks like a file list, show as a table
+            if '\n' in output and all('/' not in f for f in output.split()):
+                from rich.table import Table
+                table = Table(show_header=False, box=box.SIMPLE)
+                for fname in output.split():
+                    table.add_row(fname)
+                content = table
+            else:
+                content = output
+            return Panel(
+                Group(
+                    f"{exit_status}",
+                    content
+                ),
+                title="[bold magenta]Tool Execution[/bold magenta]",
+                border_style="magenta",
+                padding=(1, 2)
+            )
+        # If it's a string, just return as Markdown
+        return Markdown(str(tool_output))
 
     async def run(self):
         docker_client = DockerExecution()
