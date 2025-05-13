@@ -11,7 +11,7 @@ load_dotenv()
 class AIAgent:
     def __init__(self, docker_client):
         self.groq = Groq()
-        self.model = 'llama-3.3-70b-versatile'
+        self.model = 'llama-3.1-8b-instant'
         self.docker_client = docker_client
         
         
