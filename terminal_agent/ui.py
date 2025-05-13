@@ -10,6 +10,8 @@ from .dockerClient import DockerExecution
 from .agent import AIAgent
 import asyncio
 import os
+from rich.syntax import Syntax
+from rich.table import Table
 
 
 # ui.py has own convo history to avoid displaying metadata - cleaner responses
@@ -45,9 +47,16 @@ class TerminalUI:
 
     def display_docker_panel(self):
         mode_indicator = "[bold red](DOCKER INPUT MODE)[/bold red]\n\n" if self.docker_mode else ""
-        content = mode_indicator + "\n\n".join(self.docker_messages)
+        rendered = []
+        if mode_indicator:
+            rendered.append(Markdown(mode_indicator))
+        for msg in self.docker_messages:
+            if isinstance(msg, tuple) and msg[0] == "panel":
+                rendered.append(msg[1])
+            else:
+                rendered.append(Markdown(str(msg)))
         return Panel(
-            Markdown(content),
+            Group(*rendered),
             title="[bold green]Docker Container[/bold green]",
             border_style="green",
             box=box.ROUNDED,
@@ -65,8 +74,9 @@ class TerminalUI:
             )
             # If output looks like a file list, show as a table
             if '\n' in output and all('/' not in f for f in output.split()):
-                from rich.table import Table
+
                 table = Table(show_header=False, box=box.SIMPLE)
+
                 for fname in output.split():
                     table.add_row(fname)
                 content = table
@@ -84,22 +94,29 @@ class TerminalUI:
         # If it's a string, just return as Markdown
         return Markdown(str(tool_output))
 
+    def format_tool_panel(self, tool_name, details, content=None, style="magenta"):
+        md = ""
+
+        for k, v in details.items():
+            md += f"- **{k}**: {v}\n"
+        
+        if content:
+            md += f"\n{content}\n"
+        
+        return Panel(Markdown(md), title=f"[bold {style}]{tool_name}[/bold {style}]", border_style=style)
+
     async def run(self):
         docker_client = DockerExecution()
         docker_client.start_container()
         self.agent = AIAgent(docker_client)
-        self.docker_messages.append("Starting Docker container...")
+        self.docker_messages.append("Docker Container Output")
         while True:
             os.system('cls' if os.name == 'nt' else 'clear')
-            
             self.layout["terminal"].update(self.display_terminal_panel())
             self.layout["docker"].update(self.display_docker_panel())
-            
             self.console.print(self.layout)
-            
             prompt = "Docker > " if self.docker_mode else "You: "
             user_input = input(prompt).strip()
-            
             if user_input.lower() == "exit":
                 if self.docker_mode:
                     self.docker_mode = False
@@ -108,7 +125,6 @@ class TerminalUI:
                 else:
                     self.console.print("[yellow]Goodbye![/yellow]")
                     break
-
             if user_input.lower() == "docker":
                 self.docker_mode = True
                 self.messages.extend([
@@ -116,27 +132,34 @@ class TerminalUI:
                 f"Agent: Entering Docker input mode. Type 'exit' to return to normal mode."
                 ])
                 continue
-            
             if self.docker_mode and docker_client and docker_client.container:
                 try:
-                    # KEEP THIS FOR USER TO ACCESS DOCKER CONTAINER WITHOUT USE OF AGENT (check files and stuff)
                     exit_code, output = docker_client.container.exec_run(f"/bin/bash -c '{user_input}'")
                     result = output.decode('utf-8')
-                    self.docker_messages.append(f"$ {user_input}\n{result}")
+                    panel = self.format_docker_output(user_input, result, exit_code)
+                    self.docker_messages.append(("panel", panel))
                 except Exception as e:
                     self.docker_messages.append(f"$ {user_input}\nError: {str(e)}")
-
             elif not self.docker_mode:
-                # get ai response
                 response = await self.agent.process_input(user_input)
-
-                if response.get('docker_output'):
-                    self.docker_messages.append(f"Tool execution: \n{response['docker_output']}")
+                tool_output = response.get('docker_output')
+                if tool_output:
+                    
+                    if isinstance(tool_output, dict) and 'exit_code' in tool_output:
+                        panel = self.format_tool_panel(
+                            "RunCommand",
+                            {"Exit code": tool_output['exit_code']},
+                            tool_output['output'],
+                            style="magenta"
+                        )
+                        self.docker_messages.append(("panel", panel))
+                    else:
+                        self.docker_messages.append(("panel", self.format_tool_panel("Tool", {}, str(tool_output))))
                 else:
                     self.messages.extend([
                         f"You: {user_input}",
                         f"Agent: {response['response_text']}"
-                        ])
+                    ])
 
 
         
