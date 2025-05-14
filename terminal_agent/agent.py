@@ -66,7 +66,7 @@ class AIAgent:
                     "parameters": {
                         "type": "object",
                         "properties": {},
-                        "required": [""]
+                        "required": []
                     }
                 }
             }
@@ -154,7 +154,7 @@ Remember to adhere to best practices in software development, including writing 
 
 If the user requests running multiple files, call the appropriate tool for each file, one at a time, until all requested files have been processed.
 '''
-        self.system_prompt_short = '''You are an AI terminal agent. You can call tools in succession to accomplish multi-step user requests in a Docker container. For each user request, decide if you should call a tool or respond with text. If the request requires multiple actions, call the necessary tools one after another until all steps are complete, then respond with text. Only respond with text when you are done with all tool calls needed for the user's request.'''
+        self.system_prompt_short = '''You are an AI terminal agent. You can call tools in succession to accomplish multi-step user requests in a Docker container. For each user request, decide if you should call a tool or respond with text. If the request requires multiple actions, call the necessary tools one after another until all steps are complete, then respond with text. Remember to only call one tool per request. Only respond with text when you are done with all tool calls needed for the user's request.'''
         self.system_prompt = self.system_prompt_short
     
     def add_message(self, role: str, content: str):
@@ -192,7 +192,7 @@ If the user requests running multiple files, call the appropriate tool for each 
     async def process_input(self, user_input: str):
         original_prompt = {"role": "user", "content": user_input}
         tool_outputs = []
-        max_loops = 5
+        max_loops = 3
         loop_count = 0
         last_tool_name = None
         last_tool_args = None

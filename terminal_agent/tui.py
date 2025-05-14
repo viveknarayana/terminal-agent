@@ -27,6 +27,13 @@ class TerminalTUI(App):
         self.docker_mode = False
         self.docker_client = None
         self.agent = None
+        self.system_prompt = (
+            "You are an AI terminal agent. You can call tools in succession to accomplish multi-step user requests in a Docker container. "
+            "For each user request, decide if you should call a tool or respond with text. "
+            "If the request requires multiple actions, call the necessary tools one after another until all steps are complete, then respond with text. "
+            "Never output tool call instructions as text. If you need to use a tool, always use the tool call API. "
+            "Only respond with text when you are done with all tool calls needed for the user's request."
+        )
 
     def compose(self) -> ComposeResult:
         yield Header()
