@@ -216,17 +216,12 @@ If the user requests running multiple files, call the appropriate tool for each 
             tool_calls = response_message.tool_calls
             if not tool_calls:
                 # Model chose to respond with text
-                return {
-                    "response_text": response_message.content,
-                    "docker_output": last_tool_output,
-                    "all_tool_outputs": tool_outputs
-                }
+                yield {"type": "text", "response": response_message.content}
+                return
             # Model chose a tool
             tool_call = tool_calls[0]
             function_name = tool_call.function.name
             function_args = json.loads(tool_call.function.arguments)
-            last_tool_name = function_name
-            last_tool_args = function_args
             # Validate tool arguments before calling the tool
             def valid_tool_args(tool_name, args):
                 if tool_name == "create_python_file":
@@ -247,20 +242,16 @@ If the user requests running multiple files, call the appropriate tool for each 
             if not valid_tool_args(function_name, function_args):
                 error_msg = f"[ERROR] Invalid arguments for tool '{function_name}': {function_args}"
                 print(error_msg)
-                return {
-                    "response_text": error_msg,
-                    "docker_output": last_tool_output,
-                    "all_tool_outputs": tool_outputs
-                }
+                yield {"type": "text", "response": error_msg}
+                return
             # Prevent repeated tool calls with same arguments
-            if len(tool_outputs) > 0 and function_name == tool_outputs[-1]["tool"] and function_args == tool_outputs[-1]["args"]:
+            if last_tool_name == function_name and last_tool_args == function_args:
                 repeat_msg = f"[Agent stopped: repeated tool call '{function_name}' with same arguments] {last_tool_output}"
                 print(f"[DEBUG] {repeat_msg}")
-                return {
-                    "response_text": repeat_msg,
-                    "docker_output": last_tool_output,
-                    "all_tool_outputs": tool_outputs
-                }
+                yield {"type": "text", "response": repeat_msg}
+                return
+            last_tool_name = function_name
+            last_tool_args = function_args
             # Actually call the tool
             if function_name == "create_python_file":
                 tool_result = self.create_python_file(
@@ -288,6 +279,7 @@ If the user requests running multiple files, call the appropriate tool for each 
                 "args": function_args,
                 "output": tool_result
             })
+            yield {"type": "tool", "tool": function_name, "args": function_args, "output": tool_result}
             # Prepare next LLM call: original prompt, tool call, tool output
             tool_call_msg = {
                 "role": "assistant",
@@ -309,8 +301,9 @@ If the user requests running multiple files, call the appropriate tool for each 
             print(f"[DEBUG] Tool call: {function_name} with args: {function_args}")
             print(f"[DEBUG] Tool output: {tool_result}")
         # If we hit max_loops, return last tool output
-        return {
-            "response_text": f"[Agent stopped after {max_loops} tool calls] {last_tool_output}",
-            "docker_output": last_tool_output,
-            "all_tool_outputs": tool_outputs
-        }
+        yield {"type": "text", "response": f"[Agent stopped after {max_loops} tool calls] {last_tool_output}"}
+        return
+
+    async def process_input_stream(self, user_input: str):
+        async for event in self.process_input(user_input):
+            yield event

@@ -86,12 +86,13 @@ class TerminalTUI(App):
                 await terminal_panel.add_message(f"You: {user_input}")
         else:
             await terminal_panel.add_message(f"You: {user_input}")
-            response = await self.agent.process_input(user_input)
-            tool_output = response.get('docker_output')
-            if tool_output:
-                await docker_panel.add_message(str(tool_output))
-            else:
-                await terminal_panel.add_message(f"Agent: {response['response_text']}")
+            async for event in self.agent.process_input_stream(user_input):
+                if event["type"] == "tool":
+                    # Show tool result in Docker panel immediately
+                    await docker_panel.add_message(f"Tool: {event['tool']} Args: {event['args']} Output: {event['output']}")
+                elif event["type"] == "text":
+                    # Show final LLM response in Terminal panel
+                    await terminal_panel.add_message(f"Agent: {event['response']}")
 
 if __name__ == "__main__":
     TerminalTUI().run()
