@@ -150,20 +150,7 @@ Remember to adhere to best practices in software development, including writing 
 
 If the user requests running multiple files, call the appropriate tool for each file, one at a time, until all requested files have been processed.
 '''
-        self.system_prompt_short = '''You are an AI terminal agent. Help the user with coding and terminal tasks in a Docker container. Be concise.
-
-You have access to the following tools:
-- create_python_file: Create a Python file in the Docker container.
-- run_python_file: Run a Python file in the Docker container.
-- list_files: List all the current files in the Docker container.
-
-You can use these tools in succession to accomplish multi-step tasks (for example, create a file and then run it). After each tool call, you will receive the output and can decide on the next action, up to a maximum of 3 iterations per input. You may only call one tool at a time. Use the most recent tool output to inform your next tool call.
-
-When using the `run_python_file` tool, you must only attempt to run files that actually exist in the container, as shown by the output of the `list_files` tool. Do not guess file names.
-
-After you receive the output of a tool, if it answers the user's request, respond to the user in natural language. Only call another tool if more information or action is needed.
-
-If the user asks to list files, call the `list_files` tool once, then respond to the user with the file list. Do not call any other tools unless the user requests further action.'''
+        self.system_prompt_short = '''You are an AI terminal agent. You can call tools in succession to accomplish multi-step user requests in a Docker container. For each user request, decide if you should call a tool or respond with text. If the request requires multiple actions, call the necessary tools one after another until all steps are complete, then respond with text. Only respond with text when you are done with all tool calls needed for the user's request.'''
         self.system_prompt = self.system_prompt_short
     
     def add_message(self, role: str, content: str):
@@ -199,21 +186,20 @@ If the user asks to list files, call the `list_files` tool once, then respond to
 
     
     async def process_input(self, user_input: str):
-        # Always keep the original user prompt
         original_prompt = {"role": "user", "content": user_input}
-        tool_history = []  # Only tool call/response pairs for this session
-        max_loops = 3
-        loop_count = 0
         tool_outputs = []
-        final_response_content = None
-
+        max_loops = 5
+        loop_count = 0
+        last_tool_name = None
+        last_tool_args = None
+        last_tool_output = None
+        
+        # First LLM call: just the user prompt
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            original_prompt
+        ]
         while loop_count < max_loops:
-            print(f"[DEBUG] Agentic loop iteration: {loop_count+1}")
-            messages = [
-                {"role": "system", "content": self.system_prompt},
-                original_prompt,
-                *tool_history
-            ]
             response = self.groq.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -224,108 +210,103 @@ If the user asks to list files, call the `list_files` tool once, then respond to
             )
             response_message = response.choices[0].message
             tool_calls = response_message.tool_calls
-            if tool_calls:
-                tool_call = tool_calls[0]
-                function_name = tool_call.function.name
-                function_args = json.loads(tool_call.function.arguments)
-                print(f"[DEBUG] Tool call: {function_name} with args: {function_args}")
-                if function_name == "create_python_file":
-                    function_response = self.create_python_file(
-                        file_name=function_args.get("file_name"),
-                        content=function_args.get("content")
+            if not tool_calls:
+                # Model chose to respond with text
+                return {
+                    "response_text": response_message.content,
+                    "docker_output": last_tool_output,
+                    "all_tool_outputs": tool_outputs
+                }
+            # Model chose a tool
+            tool_call = tool_calls[0]
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+            last_tool_name = function_name
+            last_tool_args = function_args
+            # Validate tool arguments before calling the tool
+            def valid_tool_args(tool_name, args):
+                if tool_name == "create_python_file":
+                    return (
+                        isinstance(args, dict)
+                        and isinstance(args.get("file_name"), str) and args.get("file_name")
+                        and isinstance(args.get("content"), str)
                     )
-                elif function_name == "run_python_file":
-                    function_response = self.run_python_file(
-                        file_name=function_args.get("file_name")
+                elif tool_name == "run_python_file":
+                    return (
+                        isinstance(args, dict)
+                        and isinstance(args.get("file_name"), str) and args.get("file_name")
                     )
-                elif function_name == "list_files":
-                    function_response = self.list_files()
-                    # Try to parse the output and format as a readable list
-                    if isinstance(function_response, str):
-                        files = [f for f in function_response.strip().splitlines() if f]
-                    elif isinstance(function_response, list):
-                        files = function_response
-                    else:
-                        files = []
-                    formatted = "The following files are present in the Docker container:\n" + "\n".join(f"- {f}" for f in files)
-                    tool_content = formatted
-                else:
-                    function_response = f"Unknown tool: {function_name}"
-                    tool_content = str(function_response)
+                elif tool_name == "list_files":
+                    return True  # No args required
+                return False
 
-                if function_name != "list_files":
-                    tool_content = str(function_response)
-
-                tool_outputs.append({
-                    "tool": function_name,
-                    "args": function_args,
-                    "output": tool_content
-                })
-                # Add this tool call/response to tool_history for next loop
-                tool_history.append({
-                    "tool_call_id": tool_call.id,
-                    "role": "tool",
-                    "name": function_name,
-                    "content": tool_content
-                })
-                loop_count += 1
-
-                # Reprompt the LLM after tool call to allow for normal response or further chaining
-                messages = [
-                    {"role": "system", "content": self.system_prompt},
-                    original_prompt,
-                    *tool_history
-                ]
-                response = self.groq.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    stream=False,
-                    tools=self.tools,
-                    tool_choice="auto",
-                    max_completion_tokens=4096
+            if not valid_tool_args(function_name, function_args):
+                error_msg = f"[ERROR] Invalid arguments for tool '{function_name}': {function_args}"
+                print(error_msg)
+                return {
+                    "response_text": error_msg,
+                    "docker_output": last_tool_output,
+                    "all_tool_outputs": tool_outputs
+                }
+            # Prevent repeated tool calls with same arguments
+            if len(tool_outputs) > 0 and function_name == tool_outputs[-1]["tool"] and function_args == tool_outputs[-1]["args"]:
+                repeat_msg = f"[Agent stopped: repeated tool call '{function_name}' with same arguments] {last_tool_output}"
+                print(f"[DEBUG] {repeat_msg}")
+                return {
+                    "response_text": repeat_msg,
+                    "docker_output": last_tool_output,
+                    "all_tool_outputs": tool_outputs
+                }
+            # Actually call the tool
+            if function_name == "create_python_file":
+                tool_result = self.create_python_file(
+                    file_name=function_args.get("file_name"),
+                    content=function_args.get("content")
                 )
-                response_message = response.choices[0].message
-                tool_calls = response_message.tool_calls
-                if not tool_calls:
-                    # LLM is done, return its message as the final answer
-                    final_response_content = response_message.content
-                    tool_history.append({
-                        "role": "assistant",
-                        "content": final_response_content
-                    })
-                    print(f"[DEBUG] LLM finished after tool call at iteration {loop_count}.")
-                    break
-                # Otherwise, continue chaining tools
-                continue
+            elif function_name == "run_python_file":
+                tool_result = self.run_python_file(
+                    file_name=function_args.get("file_name")
+                )
+            elif function_name == "list_files":
+                tool_result = self.list_files()
+                if isinstance(tool_result, str):
+                    files = [f for f in tool_result.strip().splitlines() if f]
+                elif isinstance(tool_result, list):
+                    files = tool_result
+                else:
+                    files = []
+                tool_result = "The following files are present in the Docker container:\n" + "\n".join(f"- {f}" for f in files)
             else:
-                # No tool calls, just return the response as normal
-                final_response_content = response_message.content
-                print(f"[DEBUG] No tool calls. Exiting loop at iteration {loop_count+1}.")
-                break
-
-        if final_response_content is None:
-            print(f"[DEBUG] Max loop count reached. Fetching final LLM response.")
+                tool_result = f"Unknown tool: {function_name}"
+            last_tool_output = tool_result
+            tool_outputs.append({
+                "tool": function_name,
+                "args": function_args,
+                "output": tool_result
+            })
+            # Prepare next LLM call: original prompt, tool call, tool output
+            tool_call_msg = {
+                "role": "assistant",
+                "content": f"TOOL CALL: {function_name} with args: {json.dumps(function_args)}"
+            }
+            tool_output_msg = {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "name": function_name,
+                "content": str(tool_result)
+            }
             messages = [
                 {"role": "system", "content": self.system_prompt},
                 original_prompt,
-                *tool_history
+                tool_call_msg,
+                tool_output_msg
             ]
-            response = self.groq.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                stream=False,
-                tools=self.tools,
-                tool_choice="auto",
-                max_completion_tokens=4096
-            )
-            final_response_content = response.choices[0].message.content
-        # Fallback: if still no assistant message, return last tool output
-        if final_response_content is None and tool_outputs:
-            final_response_content = tool_outputs[-1]["output"]
-
-        print(f"[DEBUG] Final response: {final_response_content}")
+            loop_count += 1
+            print(f"[DEBUG] Tool call: {function_name} with args: {function_args}")
+            print(f"[DEBUG] Tool output: {tool_result}")
+        # If we hit max_loops, return last tool output
         return {
-            "response_text": final_response_content,
-            "docker_output": tool_outputs[-1]["output"] if tool_outputs else None,
+            "response_text": f"[Agent stopped after {max_loops} tool calls] {last_tool_output}",
+            "docker_output": last_tool_output,
             "all_tool_outputs": tool_outputs
         }
