@@ -13,6 +13,7 @@ import os
 from rich.syntax import Syntax
 from rich.table import Table
 
+# OLD UI CODE
 
 # ui.py has own convo history to avoid displaying metadata - cleaner responses
 # Go into that and make some changes to format responses better with regards to docker output and confirmation that tool ran
