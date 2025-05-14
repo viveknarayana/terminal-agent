@@ -5,6 +5,10 @@ from typing import List, Dict, Any
 import json
 
 # Maybe convert to Cerebras for faster inference
+# TO DO
+# Do more prompt engineering to figure out how to improve context aware sequential tool calls 
+# 'list files and make a python script to output those'
+
 
 load_dotenv()
 
