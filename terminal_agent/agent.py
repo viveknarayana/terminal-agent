@@ -291,12 +291,8 @@ If the user requests running multiple files, call the appropriate tool for each 
                 "name": function_name,
                 "content": str(tool_result)
             }
-            messages = [
-                {"role": "system", "content": self.system_prompt},
-                original_prompt,
-                tool_call_msg,
-                tool_output_msg
-            ]
+            messages.append(tool_call_msg)
+            messages.append(tool_output_msg)
             loop_count += 1
             print(f"[DEBUG] Tool call: {function_name} with args: {function_args}")
             print(f"[DEBUG] Tool output: {tool_result}")
