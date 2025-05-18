@@ -191,6 +191,7 @@ If the user requests running multiple files, call the appropriate tool for each 
     
     async def process_input(self, user_input: str):
         original_prompt = {"role": "user", "content": user_input}
+        self.add_message("user", user_input)
         tool_outputs = []
         max_loops = 3
         loop_count = 0
@@ -200,6 +201,7 @@ If the user requests running multiple files, call the appropriate tool for each 
         
         # First LLM call: just the user prompt
         messages = [
+            *self.conversation_history,
             {"role": "system", "content": self.system_prompt},
             original_prompt
         ]
@@ -216,6 +218,7 @@ If the user requests running multiple files, call the appropriate tool for each 
             tool_calls = response_message.tool_calls
             if not tool_calls:
                 # Model chose to respond with text
+                self.add_message("assistant", response_message.content)
                 yield {"type": "text", "response": response_message.content}
                 return
             # Model chose a tool
