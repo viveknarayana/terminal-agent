@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from groq import Groq
 from typing import List, Dict, Any
 import json
+import logging
 
 # Maybe convert to Cerebras for faster inference
 # TO DO
@@ -301,6 +302,13 @@ If the user requests running multiple files, call the appropriate tool for each 
             loop_count += 1
             print(f"[DEBUG] Tool call: {function_name} with args: {function_args}")
             print(f"[DEBUG] Tool output: {tool_result}")
+            logging.basicConfig(
+                level=logging.DEBUG,
+                filename="agent_debug.log",
+                filemode="a",
+                format="%(asctime)s %(levelname)s %(message)s"
+            )
+            logging.debug(tool_calls)
         # If we hit max_loops, return last tool output
         yield {"type": "text", "response": f"[Agent stopped after {max_loops} tool calls] {last_tool_output}"}
         return
