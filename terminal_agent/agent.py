@@ -198,6 +198,7 @@ If the user requests running multiple files, call the appropriate tool for each 
         last_tool_name = None
         last_tool_args = None
         last_tool_output = None
+        available_tools = [tool["function"]["name"] for tool in self.tools]
         
         # First LLM call: just the user prompt
         messages = [
@@ -226,6 +227,7 @@ If the user requests running multiple files, call the appropriate tool for each 
             function_name = tool_call.function.name
             function_args = json.loads(tool_call.function.arguments)
             # Validate tool arguments before calling the tool
+
             def valid_tool_args(tool_name, args):
                 if tool_name == "create_python_file":
                     return (

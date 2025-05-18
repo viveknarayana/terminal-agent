@@ -3,6 +3,8 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Static, Header, Footer, Input
 from .dockerClient import DockerExecution
 from .agent import AIAgent
+from rich.panel import Panel
+from rich.text import Text
 
 class TerminalPanel(VerticalScroll):
     can_focus = True
@@ -61,6 +63,15 @@ class TerminalTUI(App):
         next_panel = panels[1] if focused is panels[0] else panels[0]
         self.set_focus(next_panel)
 
+    def format_tool_output_panel(self, tool, args, output):
+        content = f"[b]Tool:[/b] {tool}\n[b]Args:[/b] {args}\n\n{output}"
+        return Panel(
+            Text(content, style="white"),
+            title="[bold magenta]TOOL OUTPUT[/bold magenta]",
+            border_style="magenta",
+            padding=(1, 2)
+        )
+
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         user_input = event.value.strip()
         terminal_panel = self.query_one("#terminal_panel", TerminalPanel)
@@ -95,10 +106,9 @@ class TerminalTUI(App):
             await terminal_panel.add_message(f"You: {user_input}")
             async for event in self.agent.process_input_stream(user_input):
                 if event["type"] == "tool":
-                    # Show tool result in Docker panel immediately
-                    await docker_panel.add_message(f"Tool: {event['tool']} Args: {event['args']} Output: {event['output']}")
+                    panel = self.format_tool_output_panel(event['tool'], event['args'], event['output'])
+                    await docker_panel.mount(Static(panel, markup=False))
                 elif event["type"] == "text":
-                    # Show final LLM response in Terminal panel
                     await terminal_panel.add_message(f"Agent: {event['response']}")
 
 if __name__ == "__main__":
