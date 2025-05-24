@@ -78,5 +78,16 @@ class DockerExecution:
             'output': output.decode('utf-8')
         }
 
+    def install_dependency(self, dependency):
+        if not self.container:
+            raise RuntimeError("Container not started. Call start_container() first.")
+        # Use bash -c to allow quoted dependencies (e.g., 'pandas==1.5.0')
+        cmd = f"pip install {dependency}"
+        exit_code, output = self.container.exec_run(cmd)
+        return {
+            'exit_code': exit_code,
+            'output': output.decode('utf-8')
+        }
+
     def end_container(self):
         pass
