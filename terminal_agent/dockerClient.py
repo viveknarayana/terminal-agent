@@ -32,7 +32,8 @@ class DockerExecution:
                     command="sleep infinity",
                     detach=True,
                     tty=True,
-                    name="terminal-agent-container"
+                    name="terminal-agent-container",
+                    ports={'5000/tcp': 5001}
                 )
         except docker.errors.NotFound:
             self.container = self.client.containers.run(
@@ -91,3 +92,12 @@ class DockerExecution:
 
     def end_container(self):
         pass
+
+    def run_shell_command(self, command):
+        if not self.container:
+            raise RuntimeError("Container not started. Call start_container() first.")
+        exit_code, output = self.container.exec_run(command)
+        return {
+            'exit_code': exit_code,
+            'output': output.decode('utf-8')
+        }

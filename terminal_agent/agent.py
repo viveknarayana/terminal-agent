@@ -88,6 +88,23 @@ class AIAgent:
                     }
                 }
             }
+            # {
+            #     "type": "function",
+            #     "function": {
+            #         "name": "run_shell_command",
+            #         "description": "Run a shell command inside the Docker container.",
+            #         "parameters": {
+            #             "type": "object",
+            #             "properties": {
+            #                 "command": {
+            #                     "type": "string",
+            #                     "description": "The shell command to run, e.g., 'ls -l' or 'cat requirements.txt'"
+            #                 }
+            #             },
+            #             "required": ["command"]
+            #         }
+            #     }
+            # }
         ]
     
         self.conversation_history = []
@@ -132,6 +149,14 @@ class AIAgent:
             except Exception as e:
                 return f"Error: {str(e)}"
         return "Docker client not available."
+
+    # def run_shell_command(self, command):
+    #     if self.docker_client:
+    #         try:
+    #             return self.docker_client.run_shell_command(command)
+    #         except Exception as e:
+    #             return f"Error: {str(e)}"
+    #     return "Docker client not available."
 
     
     async def process_input(self, user_input: str):
@@ -192,6 +217,11 @@ class AIAgent:
                         isinstance(args, dict)
                         and isinstance(args.get("dependency"), str) and args.get("dependency")
                     )
+                elif tool_name == "run_shell_command":
+                    return (
+                        isinstance(args, dict)
+                        and isinstance(args.get("command"), str) and args.get("command")
+                    )
                 return False
 
             if not valid_tool_args(function_name, function_args):
@@ -228,6 +258,10 @@ class AIAgent:
             elif function_name == "install_dependency":
                 tool_result = self.install_dependency(
                     dependency=function_args.get("dependency")
+                )
+            elif function_name == "run_shell_command":
+                tool_result = self.run_shell_command(
+                    command=function_args.get("command")
                 )
             else:
                 tool_result = f"Unknown tool: {function_name}"
