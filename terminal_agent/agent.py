@@ -87,6 +87,45 @@ class AIAgent:
                         "required": ["dependency"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_me",
+                    "description": "Get the authenticated user's GitHub profile information using MCP.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_repositories",
+                    "description": "Search GitHub repositories using MCP.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The search query for repositories."
+                            },
+                            "per_page": {
+                                "type": "integer",
+                                "description": "Results per page (default 20)",
+                                "default": 20
+                            },
+                            "page": {
+                                "type": "integer",
+                                "description": "Page number (default 1)",
+                                "default": 1
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
             }
             # {
             #     "type": "function",
@@ -158,7 +197,57 @@ class AIAgent:
     #             return f"Error: {str(e)}"
     #     return "Docker client not available."
 
-    
+    def call_mcp_stdio_tool(self, tool_name, arguments=None, docker_token=None):
+        import subprocess
+        import json
+        if arguments is None:
+            arguments = {}
+        if docker_token is None:
+            raise ValueError("You must provide a GitHub token for MCP server.")
+        proc = subprocess.Popen(
+            [
+                "docker", "run", "-i", "--rm",
+                "-e", f"GITHUB_PERSONAL_ACCESS_TOKEN={docker_token}",
+                "ghcr.io/github/github-mcp-server"
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            }
+        }
+        proc.stdin.write(json.dumps(request) + "\n")
+        proc.stdin.flush()
+        response_line = proc.stdout.readline()
+        try:
+            response = json.loads(response_line)
+        except Exception as e:
+            response = {"error": f"Failed to parse response: {response_line}", "exception": str(e)}
+        proc.terminate()
+        return response
+
+    def get_me(self):
+        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+        if not token:
+            return "[ERROR] GITHUB_PERSONAL_ACCESS_TOKEN not set."
+        return self.call_mcp_stdio_tool("get_me", arguments={}, docker_token=token)
+
+    def search_repositories(self, query, per_page=20, page=1):
+        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+        if not token:
+            return "[ERROR] GITHUB_PERSONAL_ACCESS_TOKEN not set."
+        params = {"query": query, "perPage": per_page, "page": page}
+        return self.call_mcp_stdio_tool("search_repositories", arguments=params, docker_token=token)
+
     async def process_input(self, user_input: str):
         original_prompt = {"role": "user", "content": user_input}
         self.add_message("user", user_input)
@@ -217,6 +306,13 @@ class AIAgent:
                         isinstance(args, dict)
                         and isinstance(args.get("dependency"), str) and args.get("dependency")
                     )
+                elif tool_name == "get_me":
+                    return True  # No args required
+                elif tool_name == "search_repositories":
+                    return (
+                        isinstance(args, dict)
+                        and isinstance(args.get("query"), str) and args.get("query")
+                    )
                 elif tool_name == "run_shell_command":
                     return (
                         isinstance(args, dict)
@@ -258,6 +354,14 @@ class AIAgent:
             elif function_name == "install_dependency":
                 tool_result = self.install_dependency(
                     dependency=function_args.get("dependency")
+                )
+            elif function_name == "get_me":
+                tool_result = self.get_me()
+            elif function_name == "search_repositories":
+                tool_result = self.search_repositories(
+                    query=function_args.get("query"),
+                    per_page=function_args.get("per_page", 20),
+                    page=function_args.get("page", 1)
                 )
             elif function_name == "run_shell_command":
                 tool_result = self.run_shell_command(
