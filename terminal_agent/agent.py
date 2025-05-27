@@ -22,15 +22,20 @@ load_dotenv()
 class AIAgent:
     def __init__(self, docker_client):
         self.groq = Groq()
-        self.model = 'gemma2-9b-it'
+        # self.model = 'gemma2-9b-it'
+        self.model = 'llama-3.3-70b-versatile'
         self.docker_client = docker_client
 
-        # Fetch MCP tools ONCE
+        # Get all MCP tools (summaries and full schema)
         self.mcp_tools = self.fetch_mcp_tools()
         self.mcp_tool_names = [tool["function"]["name"] for tool in self.mcp_tools]
+        self.mcp_tool_summaries = [
+            {"name": tool["function"]["name"], "description": tool["function"]["description"]}
+            for tool in self.mcp_tools
+        ]
 
         # Local tools:
-        self.tools = [
+        self.local_tools = [
             {
                 "type": "function",
                 "function": {
@@ -154,7 +159,12 @@ class AIAgent:
             #         }
             #     }
             # }
-        ] + self.mcp_tools
+        ]
+        self.tools = self.local_tools + self.mcp_tools
+        self.tool_summaries = [
+            {"name": tool["function"]["name"], "description": tool["function"]["description"]}
+            for tool in self.tools
+        ]
     
         self.conversation_history = []
         self.system_prompt_short = '''You are an AI terminal agent. You can call tools in succession to accomplish multi-step user requests in a Docker container. For each user request, decide if you should call a tool or respond with text. If the request requires multiple actions, call the necessary tools one after another until all steps are complete, then respond with text. Remember to only call one tool per request. Only respond with text when you are done with all tool calls needed for the user's request.'''
@@ -329,6 +339,26 @@ class AIAgent:
             logging.debug(f"Failed to parse MCP tools/list response: {response_line}, error: {e}")
             return []
 
+    def select_tool(self, user_input):
+        tool_list_str = "\n".join(
+            f"{i+1}. {t['name']}: {t['description']}" for i, t in enumerate(self.tool_summaries)
+        )
+        prompt = (
+            f"User request: {user_input}\n"
+            f"Available tools:\n{tool_list_str}\n"
+            "If one of these tools is relevant, reply ONLY with the tool name. "
+            "If none are relevant, reply with 'none' and answer the user's question in natural language."
+        )
+        response = self.groq.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=128
+        )
+        content = response.choices[0].message.content.strip()
+        if content.lower().startswith("none"):
+            return None, content[4:].strip()  # NLP answer
+        return content, None
+
     async def process_input(self, user_input: str):
         original_prompt = {"role": "user", "content": user_input}
         self.add_message("user", user_input)
@@ -339,151 +369,101 @@ class AIAgent:
         last_tool_args = None
         last_tool_output = None
         available_tools = [tool["function"]["name"] for tool in self.tools]
-        
-        # First LLM call: just the user prompt
-        messages = [
-            *self.conversation_history,
-            {"role": "system", "content": self.system_prompt},
-            original_prompt
-        ]
-        while loop_count < max_loops:
+
+        # tool selection local or MCP
+        chosen_tool_name, nl_response = self.select_tool(user_input)
+        if nl_response is not None:
+            self.add_message("assistant", nl_response)
+            yield {"type": "text", "response": nl_response}
+            return
+        if not chosen_tool_name:
+            yield {"type": "text", "response": "[No relevant tool found and no response generated.]"}
+            return
+        selected_tool = next((tool for tool in self.tools if tool["function"]["name"] == chosen_tool_name), None)
+        if not selected_tool:
+            yield {"type": "text", "response": f"[Tool '{chosen_tool_name}' not found in available tools.]"}
+            return
+
+        # Local tool
+        if chosen_tool_name in [t["function"]["name"] for t in self.local_tools]:
+            messages = [
+                *self.conversation_history,
+                {"role": "system", "content": self.system_prompt},
+                original_prompt
+            ]
             response = self.groq.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 stream=False,
-                tools=self.tools,
+                tools=[selected_tool],
                 tool_choice="auto",
                 max_completion_tokens=4096
             )
             response_message = response.choices[0].message
             tool_calls = response_message.tool_calls
             if not tool_calls:
-                # Model chose to respond with text
                 self.add_message("assistant", response_message.content)
                 yield {"type": "text", "response": response_message.content}
                 return
-            # Model chose a tool
             tool_call = tool_calls[0]
-            function_name = tool_call.function.name
             function_args = json.loads(tool_call.function.arguments)
-            # Validate tool arguments before calling the tool
-
-            def valid_tool_args(tool_name, args):
-                if tool_name == "create_python_file":
-                    return (
-                        isinstance(args, dict)
-                        and isinstance(args.get("file_name"), str) and args.get("file_name")
-                        and isinstance(args.get("content"), str)
-                    )
-                elif tool_name == "run_python_file":
-                    return (
-                        isinstance(args, dict)
-                        and isinstance(args.get("file_name"), str) and args.get("file_name")
-                    )
-                elif tool_name == "list_files":
-                    return True  # No args required
-                elif tool_name == "install_dependency":
-                    return (
-                        isinstance(args, dict)
-                        and isinstance(args.get("dependency"), str) and args.get("dependency")
-                    )
-                elif tool_name == "get_me":
-                    return True  # No args required
-                elif tool_name == "search_repositories":
-                    return (
-                        isinstance(args, dict)
-                        and isinstance(args.get("query"), str) and args.get("query")
-                    )
-                elif tool_name == "run_shell_command":
-                    return (
-                        isinstance(args, dict)
-                        and isinstance(args.get("command"), str) and args.get("command")
-                    )
-                return False
-
-            if not valid_tool_args(function_name, function_args):
-                error_msg = f"[ERROR] Invalid arguments for tool '{function_name}': {function_args}"
-                print(error_msg)
-                yield {"type": "text", "response": error_msg}
-                return
-            # Prevent repeated tool calls with same arguments
-            if last_tool_name == function_name and last_tool_args == function_args:
-                repeat_msg = f"[Agent stopped: repeated tool call '{function_name}' with same arguments] {last_tool_output}"
-                print(f"[DEBUG] {repeat_msg}")
-                return
-            last_tool_name = function_name
-            last_tool_args = function_args
-            # Actually call the tool
-            if function_name in self.mcp_tool_names:
-                tool_result = self.call_mcp_stdio_tool(
-                    tool_name=function_name,
-                    arguments=function_args,
-                    docker_token=os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+            # Now run the local handler
+            if chosen_tool_name == "create_python_file":
+                tool_result = self.create_python_file(
+                    file_name=function_args.get("file_name"),
+                    content=function_args.get("content")
+                )
+            elif chosen_tool_name == "run_python_file":
+                tool_result = self.run_python_file(
+                    file_name=function_args.get("file_name")
+                )
+            elif chosen_tool_name == "list_files":
+                tool_result = self.list_files()
+                if isinstance(tool_result, str):
+                    files = [f for f in tool_result.strip().splitlines() if f]
+                elif isinstance(tool_result, list):
+                    files = tool_result
+                else:
+                    files = []
+                tool_result = "The following files are present in the Docker container:\n" + "\n".join(f"- {f}" for f in files)
+            elif chosen_tool_name == "install_dependency":
+                tool_result = self.install_dependency(
+                    dependency=function_args.get("dependency")
                 )
             else:
-                if function_name == "create_python_file":
-                    tool_result = self.create_python_file(
-                        file_name=function_args.get("file_name"),
-                        content=function_args.get("content")
-                    )
-                elif function_name == "run_python_file":
-                    tool_result = self.run_python_file(
-                        file_name=function_args.get("file_name")
-                    )
-                elif function_name == "list_files":
-                    tool_result = self.list_files()
-                    if isinstance(tool_result, str):
-                        files = [f for f in tool_result.strip().splitlines() if f]
-                    elif isinstance(tool_result, list):
-                        files = tool_result
-                    else:
-                        files = []
-                    tool_result = "The following files are present in the Docker container:\n" + "\n".join(f"- {f}" for f in files)
-                elif function_name == "install_dependency":
-                    tool_result = self.install_dependency(
-                        dependency=function_args.get("dependency")
-                    )
-                elif function_name == "get_me":
-                    tool_result = self.get_me()
-                elif function_name == "search_repositories":
-                    tool_result = self.search_repositories(
-                        query=function_args.get("query"),
-                        per_page=function_args.get("per_page", 20),
-                        page=function_args.get("page", 1)
-                    )
-                elif function_name == "run_shell_command":
-                    tool_result = self.run_shell_command(
-                        command=function_args.get("command")
-                    )
-                else:
-                    tool_result = f"Unknown tool: {function_name}"
-            last_tool_output = tool_result
-            tool_outputs.append({
-                "tool": function_name,
-                "args": function_args,
-                "output": tool_result
-            })
-            yield {"type": "tool", "tool": function_name, "args": function_args, "output": tool_result}
-            # Prepare next LLM call: original prompt, tool call, tool output
-            tool_call_msg = {
-                "role": "assistant",
-                "content": f"TOOL CALL: {function_name} with args: {json.dumps(function_args)}"
-            }
-            tool_output_msg = {
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "name": function_name,
-                "content": str(tool_result)
-            }
-            messages.append(tool_call_msg)
-            messages.append(tool_output_msg)
-            loop_count += 1
-            print(f"[DEBUG] Tool call: {function_name} with args: {function_args}")
-            print(f"[DEBUG] Tool output: {tool_result}")
-            
-            logging.debug(tool_calls)
-        # If we hit max_loops, return last tool output
-        yield {"type": "text", "response": f"[Agent stopped after {max_loops} tool calls] {last_tool_output}"}
+                tool_result = f"Unknown local tool: {chosen_tool_name}"
+            yield {"type": "tool", "tool": chosen_tool_name, "args": function_args, "output": tool_result}
+            return
+
+        # MCP
+        messages = [
+            *self.conversation_history,
+            {"role": "system", "content": self.system_prompt},
+            original_prompt
+        ]
+        response = self.groq.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=False,
+            tools=[selected_tool],
+            tool_choice="auto",
+            max_completion_tokens=4096
+        )
+        response_message = response.choices[0].message
+        tool_calls = response_message.tool_calls
+        if not tool_calls:
+            self.add_message("assistant", response_message.content)
+            yield {"type": "text", "response": response_message.content}
+            return
+        tool_call = tool_calls[0]
+        function_name = tool_call.function.name
+        function_args = json.loads(tool_call.function.arguments)
+        tool_result = self.call_mcp_stdio_tool(
+            tool_name=function_name,
+            arguments=function_args,
+            docker_token=os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+        )
+        yield {"type": "tool", "tool": function_name, "args": function_args, "output": tool_result}
         return
 
     async def process_input_stream(self, user_input: str):
