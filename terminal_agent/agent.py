@@ -24,8 +24,12 @@ class AIAgent:
         self.groq = Groq()
         self.model = 'gemma2-9b-it'
         self.docker_client = docker_client
-        self.log_all_mcp_tools()
-        
+
+        # Fetch MCP tools ONCE
+        self.mcp_tools = self.fetch_mcp_tools()
+        self.mcp_tool_names = [tool["function"]["name"] for tool in self.mcp_tools]
+
+        # Local tools:
         self.tools = [
             {
                 "type": "function",
@@ -93,46 +97,46 @@ class AIAgent:
                         "required": ["dependency"]
                     }
                 }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_me",
-                    "description": "Get the authenticated user's GitHub profile information using MCP.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_repositories",
-                    "description": "Search GitHub repositories using MCP.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "The search query for repositories."
-                            },
-                            "per_page": {
-                                "type": "integer",
-                                "description": "Results per page (default 20)",
-                                "default": 20
-                            },
-                            "page": {
-                                "type": "integer",
-                                "description": "Page number (default 1)",
-                                "default": 1
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
             }
+            # {
+            #     "type": "function",
+            #     "function": {
+            #         "name": "get_me",
+            #         "description": "Get the authenticated user's GitHub profile information using MCP.",
+            #         "parameters": {
+            #             "type": "object",
+            #             "properties": {},
+            #             "required": []
+            #         }
+            #     }
+            # },
+            # {
+            #     "type": "function",
+            #     "function": {
+            #         "name": "search_repositories",
+            #         "description": "Search GitHub repositories using MCP.",
+            #         "parameters": {
+            #             "type": "object",
+            #             "properties": {
+            #                 "query": {
+            #                     "type": "string",
+            #                     "description": "The search query for repositories."
+            #                 },
+            #                 "per_page": {
+            #                     "type": "integer",
+            #                     "description": "Results per page (default 20)",
+            #                     "default": 20
+            #                 },
+            #                 "page": {
+            #                     "type": "integer",
+            #                     "description": "Page number (default 1)",
+            #                     "default": 1
+            #                 }
+            #             },
+            #             "required": ["query"]
+            #         }
+            #     }
+            # }
             # {
             #     "type": "function",
             #     "function": {
@@ -150,7 +154,7 @@ class AIAgent:
             #         }
             #     }
             # }
-        ]
+        ] + self.mcp_tools
     
         self.conversation_history = []
         self.system_prompt_short = '''You are an AI terminal agent. You can call tools in succession to accomplish multi-step user requests in a Docker container. For each user request, decide if you should call a tool or respond with text. If the request requires multiple actions, call the necessary tools one after another until all steps are complete, then respond with text. Remember to only call one tool per request. Only respond with text when you are done with all tool calls needed for the user's request.'''
@@ -239,18 +243,18 @@ class AIAgent:
         proc.terminate()
         return response
 
-    def get_me(self):
-        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
-        if not token:
-            return "[ERROR] GITHUB_PERSONAL_ACCESS_TOKEN not set."
-        return self.call_mcp_stdio_tool("get_me", arguments={}, docker_token=token)
+    # def get_me(self):
+    #     token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+    #     if not token:
+    #         return "[ERROR] GITHUB_PERSONAL_ACCESS_TOKEN not set."
+    #     return self.call_mcp_stdio_tool("get_me", arguments={}, docker_token=token)
 
-    def search_repositories(self, query, per_page=20, page=1):
-        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
-        if not token:
-            return "[ERROR] GITHUB_PERSONAL_ACCESS_TOKEN not set."
-        params = {"query": query, "perPage": per_page, "page": page}
-        return self.call_mcp_stdio_tool("search_repositories", arguments=params, docker_token=token)
+    # def search_repositories(self, query, per_page=20, page=1):
+    #     token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+    #     if not token:
+    #         return "[ERROR] GITHUB_PERSONAL_ACCESS_TOKEN not set."
+    #     params = {"query": query, "perPage": per_page, "page": page}
+    #     return self.call_mcp_stdio_tool("search_repositories", arguments=params, docker_token=token)
 
     def log_all_mcp_tools(self):
 
@@ -280,6 +284,50 @@ class AIAgent:
             response = {"error": f"Failed to parse response: {response_line}", "exception": str(e)}
         proc.terminate()
         logging.debug(f"MCP tools/list response: {response}")
+
+    def fetch_mcp_tools(self):
+        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+        if not token:
+            logging.debug("[ERROR] GITHUB_PERSONAL_ACCESS_TOKEN not set.")
+            return []
+        proc = subprocess.Popen(
+            [
+                "docker", "run", "-i", "--rm",
+                "-e", f"GITHUB_PERSONAL_ACCESS_TOKEN={token}",
+                "ghcr.io/github/github-mcp-server"
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        proc.stdin.write(json.dumps(request) + "\n")
+        proc.stdin.flush()
+        response_line = proc.stdout.readline()
+        try:
+            response = json.loads(response_line)
+            proc.terminate()
+            if "result" in response and "tools" in response["result"]:
+                return [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool["name"],
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("inputSchema", {})
+                        }
+                    }
+                    for tool in response["result"]["tools"]
+                ]
+            else:
+                logging.debug(f"Unexpected MCP tools/list response: {response}")
+                return []
+        except Exception as e:
+            proc.terminate()
+            logging.debug(f"Failed to parse MCP tools/list response: {response_line}, error: {e}")
+            return []
 
     async def process_input(self, user_input: str):
         original_prompt = {"role": "user", "content": user_input}
@@ -366,42 +414,49 @@ class AIAgent:
             last_tool_name = function_name
             last_tool_args = function_args
             # Actually call the tool
-            if function_name == "create_python_file":
-                tool_result = self.create_python_file(
-                    file_name=function_args.get("file_name"),
-                    content=function_args.get("content")
-                )
-            elif function_name == "run_python_file":
-                tool_result = self.run_python_file(
-                    file_name=function_args.get("file_name")
-                )
-            elif function_name == "list_files":
-                tool_result = self.list_files()
-                if isinstance(tool_result, str):
-                    files = [f for f in tool_result.strip().splitlines() if f]
-                elif isinstance(tool_result, list):
-                    files = tool_result
-                else:
-                    files = []
-                tool_result = "The following files are present in the Docker container:\n" + "\n".join(f"- {f}" for f in files)
-            elif function_name == "install_dependency":
-                tool_result = self.install_dependency(
-                    dependency=function_args.get("dependency")
-                )
-            elif function_name == "get_me":
-                tool_result = self.get_me()
-            elif function_name == "search_repositories":
-                tool_result = self.search_repositories(
-                    query=function_args.get("query"),
-                    per_page=function_args.get("per_page", 20),
-                    page=function_args.get("page", 1)
-                )
-            elif function_name == "run_shell_command":
-                tool_result = self.run_shell_command(
-                    command=function_args.get("command")
+            if function_name in self.mcp_tool_names:
+                tool_result = self.call_mcp_stdio_tool(
+                    tool_name=function_name,
+                    arguments=function_args,
+                    docker_token=os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
                 )
             else:
-                tool_result = f"Unknown tool: {function_name}"
+                if function_name == "create_python_file":
+                    tool_result = self.create_python_file(
+                        file_name=function_args.get("file_name"),
+                        content=function_args.get("content")
+                    )
+                elif function_name == "run_python_file":
+                    tool_result = self.run_python_file(
+                        file_name=function_args.get("file_name")
+                    )
+                elif function_name == "list_files":
+                    tool_result = self.list_files()
+                    if isinstance(tool_result, str):
+                        files = [f for f in tool_result.strip().splitlines() if f]
+                    elif isinstance(tool_result, list):
+                        files = tool_result
+                    else:
+                        files = []
+                    tool_result = "The following files are present in the Docker container:\n" + "\n".join(f"- {f}" for f in files)
+                elif function_name == "install_dependency":
+                    tool_result = self.install_dependency(
+                        dependency=function_args.get("dependency")
+                    )
+                elif function_name == "get_me":
+                    tool_result = self.get_me()
+                elif function_name == "search_repositories":
+                    tool_result = self.search_repositories(
+                        query=function_args.get("query"),
+                        per_page=function_args.get("per_page", 20),
+                        page=function_args.get("page", 1)
+                    )
+                elif function_name == "run_shell_command":
+                    tool_result = self.run_shell_command(
+                        command=function_args.get("command")
+                    )
+                else:
+                    tool_result = f"Unknown tool: {function_name}"
             last_tool_output = tool_result
             tool_outputs.append({
                 "tool": function_name,
