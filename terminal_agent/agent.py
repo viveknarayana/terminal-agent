@@ -3,13 +3,19 @@ from dotenv import load_dotenv
 from groq import Groq
 from typing import List, Dict, Any
 import json
+import subprocess
 import logging
 
 # Maybe convert to Cerebras for faster inference
 # TO DO
 # Do more prompt engineering to figure out how to improve context aware sequential tool calls 
 # 'list files and make a python script to output those'
-
+logging.basicConfig(
+                level=logging.DEBUG,
+                filename="agent_debug.log",
+                filemode="a",
+                format="%(asctime)s %(levelname)s %(message)s"
+            )
 
 load_dotenv()
 
@@ -18,7 +24,7 @@ class AIAgent:
         self.groq = Groq()
         self.model = 'gemma2-9b-it'
         self.docker_client = docker_client
-        
+        self.log_all_mcp_tools()
         
         self.tools = [
             {
@@ -198,8 +204,6 @@ class AIAgent:
     #     return "Docker client not available."
 
     def call_mcp_stdio_tool(self, tool_name, arguments=None, docker_token=None):
-        import subprocess
-        import json
         if arguments is None:
             arguments = {}
         if docker_token is None:
@@ -247,6 +251,35 @@ class AIAgent:
             return "[ERROR] GITHUB_PERSONAL_ACCESS_TOKEN not set."
         params = {"query": query, "perPage": per_page, "page": page}
         return self.call_mcp_stdio_tool("search_repositories", arguments=params, docker_token=token)
+
+    def log_all_mcp_tools(self):
+
+        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+        if not token:
+            logging.debug("[ERROR] GITHUB_PERSONAL_ACCESS_TOKEN not set.")
+            return
+        proc = subprocess.Popen(
+            [
+                "docker", "run", "-i", "--rm",
+                "-e", f"GITHUB_PERSONAL_ACCESS_TOKEN={token}",
+                "ghcr.io/github/github-mcp-server"
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        proc.stdin.write(json.dumps(request) + "\n")
+        proc.stdin.flush()
+        response_line = proc.stdout.readline()
+        try:
+            response = json.loads(response_line)
+        except Exception as e:
+            response = {"error": f"Failed to parse response: {response_line}", "exception": str(e)}
+        proc.terminate()
+        logging.debug(f"MCP tools/list response: {response}")
 
     async def process_input(self, user_input: str):
         original_prompt = {"role": "user", "content": user_input}
@@ -392,12 +425,7 @@ class AIAgent:
             loop_count += 1
             print(f"[DEBUG] Tool call: {function_name} with args: {function_args}")
             print(f"[DEBUG] Tool output: {tool_result}")
-            logging.basicConfig(
-                level=logging.DEBUG,
-                filename="agent_debug.log",
-                filemode="a",
-                format="%(asctime)s %(levelname)s %(message)s"
-            )
+            
             logging.debug(tool_calls)
         # If we hit max_loops, return last tool output
         yield {"type": "text", "response": f"[Agent stopped after {max_loops} tool calls] {last_tool_output}"}
