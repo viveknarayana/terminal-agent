@@ -365,32 +365,30 @@ class AIAgent:
         tool_outputs = []
         max_loops = 3
         loop_count = 0
-        last_tool_name = None
-        last_tool_args = None
         last_tool_output = None
-        available_tools = [tool["function"]["name"] for tool in self.tools]
+        current_input = user_input
+        
+        while loop_count < max_loops:
+            # Select tool for the current input (which may include previous tool output)
+            chosen_tool_name, nl_response = self.select_tool(current_input)
+            if nl_response is not None:
+                self.add_message("assistant", nl_response)
+                yield {"type": "text", "response": nl_response}
+                return
+            if not chosen_tool_name:
+                # No tool found, return last tool output if any
+                if last_tool_output is not None:
+                    yield {"type": "tool", "tool": tool_outputs[-1]["tool"], "args": tool_outputs[-1]["args"], "output": last_tool_output}
+                else:
+                    yield {"type": "text", "response": "[No relevant tool found and no response generated.]"}
+                return
+            selected_tool = next((tool for tool in self.tools if tool["function"]["name"] == chosen_tool_name), None)
+            if not selected_tool:
+                yield {"type": "text", "response": f"[Tool '{chosen_tool_name}' not found in available tools.]"}
+                return
 
-        # tool selection local or MCP
-        chosen_tool_name, nl_response = self.select_tool(user_input)
-        if nl_response is not None:
-            self.add_message("assistant", nl_response)
-            yield {"type": "text", "response": nl_response}
-            return
-        if not chosen_tool_name:
-            yield {"type": "text", "response": "[No relevant tool found and no response generated.]"}
-            return
-        selected_tool = next((tool for tool in self.tools if tool["function"]["name"] == chosen_tool_name), None)
-        if not selected_tool:
-            yield {"type": "text", "response": f"[Tool '{chosen_tool_name}' not found in available tools.]"}
-            return
-
-        # Local tool
-        if chosen_tool_name in [t["function"]["name"] for t in self.local_tools]:
-            messages = [
-                *self.conversation_history,
-                {"role": "system", "content": self.system_prompt},
-                original_prompt
-            ]
+            # Prepare messages for the LLM, including all conversation history and tool outputs
+            messages = [*self.conversation_history, {"role": "system", "content": self.system_prompt}, {"role": "user", "content": current_input}]
             response = self.groq.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -402,68 +400,58 @@ class AIAgent:
             response_message = response.choices[0].message
             tool_calls = response_message.tool_calls
             if not tool_calls:
+                # If no tool call, treat as final response
                 self.add_message("assistant", response_message.content)
                 yield {"type": "text", "response": response_message.content}
                 return
             tool_call = tool_calls[0]
             function_args = json.loads(tool_call.function.arguments)
-            # Now run the local handler
-            if chosen_tool_name == "create_python_file":
-                tool_result = self.create_python_file(
-                    file_name=function_args.get("file_name"),
-                    content=function_args.get("content")
-                )
-            elif chosen_tool_name == "run_python_file":
-                tool_result = self.run_python_file(
-                    file_name=function_args.get("file_name")
-                )
-            elif chosen_tool_name == "list_files":
-                tool_result = self.list_files()
-                if isinstance(tool_result, str):
-                    files = [f for f in tool_result.strip().splitlines() if f]
-                elif isinstance(tool_result, list):
-                    files = tool_result
+            # Run the tool (local or MCP)
+            if chosen_tool_name in [t["function"]["name"] for t in self.local_tools]:
+                if chosen_tool_name == "create_python_file":
+                    tool_result = self.create_python_file(
+                        file_name=function_args.get("file_name"),
+                        content=function_args.get("content")
+                    )
+                elif chosen_tool_name == "run_python_file":
+                    tool_result = self.run_python_file(
+                        file_name=function_args.get("file_name")
+                    )
+                elif chosen_tool_name == "list_files":
+                    tool_result = self.list_files()
+                    if isinstance(tool_result, str):
+                        files = [f for f in tool_result.strip().splitlines() if f]
+                    elif isinstance(tool_result, list):
+                        files = tool_result
+                    else:
+                        files = []
+                    tool_result = "The following files are present in the Docker container:\n" + "\n".join(f"- {f}" for f in files)
+                elif chosen_tool_name == "install_dependency":
+                    tool_result = self.install_dependency(
+                        dependency=function_args.get("dependency")
+                    )
                 else:
-                    files = []
-                tool_result = "The following files are present in the Docker container:\n" + "\n".join(f"- {f}" for f in files)
-            elif chosen_tool_name == "install_dependency":
-                tool_result = self.install_dependency(
-                    dependency=function_args.get("dependency")
-                )
+                    tool_result = f"Unknown local tool: {chosen_tool_name}"
             else:
-                tool_result = f"Unknown local tool: {chosen_tool_name}"
-            yield {"type": "tool", "tool": chosen_tool_name, "args": function_args, "output": tool_result}
-            return
-
-        # MCP
-        messages = [
-            *self.conversation_history,
-            {"role": "system", "content": self.system_prompt},
-            original_prompt
-        ]
-        response = self.groq.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            stream=False,
-            tools=[selected_tool],
-            tool_choice="auto",
-            max_completion_tokens=4096
-        )
-        response_message = response.choices[0].message
-        tool_calls = response_message.tool_calls
-        if not tool_calls:
-            self.add_message("assistant", response_message.content)
-            yield {"type": "text", "response": response_message.content}
-            return
-        tool_call = tool_calls[0]
-        function_name = tool_call.function.name
-        function_args = json.loads(tool_call.function.arguments)
-        tool_result = self.call_mcp_stdio_tool(
-            tool_name=function_name,
-            arguments=function_args,
-            docker_token=os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
-        )
-        yield {"type": "tool", "tool": function_name, "args": function_args, "output": tool_result}
+                tool_result = self.call_mcp_stdio_tool(
+                    tool_name=tool_call.function.name,
+                    arguments=function_args,
+                    docker_token=os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+                )
+            # Accumulate tool output
+            tool_outputs.append({"tool": chosen_tool_name, "args": function_args, "output": tool_result})
+            last_tool_output = tool_result
+            # Add tool output to conversation history as assistant message
+            self.add_message("assistant", f"Tool '{chosen_tool_name}' output: {tool_result}")
+            # Prepare next input: user request + all tool outputs so far
+            current_input = f"User request: {user_input}\nPrevious tool outputs: {tool_result}"
+            loop_count += 1
+            # If the model should stop (e.g., no more tool calls), check in next loop
+        # If max_loops reached, return last tool output
+        if tool_outputs:
+            yield {"type": "tool", "tool": tool_outputs[-1]["tool"], "args": tool_outputs[-1]["args"], "output": tool_outputs[-1]["output"]}
+        else:
+            yield {"type": "text", "response": "[No relevant tool found and no response generated.]"}
         return
 
     async def process_input_stream(self, user_input: str):
