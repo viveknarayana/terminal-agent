@@ -66,7 +66,7 @@ class TerminalTUI(App):
     def format_tool_output_panel(self, tool, args, output):
         content = f"Tool: {tool}\nArgs: {args}\n\n{output}"
         return Panel(
-            Text(str(content), style="white", markup=False),
+            Text(str(content), style="white"),
             title="[bold magenta]TOOL OUTPUT[/bold magenta]",
             border_style="magenta",
             padding=(1, 2)

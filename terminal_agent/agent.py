@@ -344,10 +344,12 @@ class AIAgent:
             f"{i+1}. {t['name']}: {t['description']}" for i, t in enumerate(self.tool_summaries)
         )
         prompt = (
-            f"User request: {user_input}\n"
-            f"Available tools:\n{tool_list_str}\n"
-            "If one of these tools is relevant, reply ONLY with the tool name. "
-            "If none are relevant, reply with 'none' and answer the user's question in natural language."
+            f"User request and execution history: {user_input}\n\n"
+            f"Available tools:\n{tool_list_str}\n\n"
+            "Your task is to decide the next step. Analyze the user's request and the history of executed tools.\n"
+            "- If the request requires multiple steps and no tools have been run yet, reply ONLY with the name of the FIRST tool to call.\n"
+            "- If tools have already been run, look at the history and reply ONLY with the name of the NEXT logical tool to continue the task.\n"
+            "- If the task is complete or no tool is needed, reply with 'none'."
         )
         response = self.groq.chat.completions.create(
             model=self.model,
@@ -371,20 +373,26 @@ class AIAgent:
         while loop_count < max_loops:
             # Select tool for the current input (which may include previous tool output)
             chosen_tool_name, nl_response = self.select_tool(current_input)
-            if nl_response is not None:
+            if nl_response:
                 self.add_message("assistant", nl_response)
                 yield {"type": "text", "response": nl_response}
                 return
             if not chosen_tool_name:
-                # No tool found, return last tool output if any
-                if last_tool_output is not None:
-                    yield {"type": "tool", "tool": tool_outputs[-1]["tool"], "args": tool_outputs[-1]["args"], "output": last_tool_output}
-                else:
-                    yield {"type": "text", "response": "[No relevant tool found and no response generated.]"}
+                # If no tool is selected, attempt to generate a natural language response
+                nl_response_messages = [*self.conversation_history, {"role": "system", "content": self.system_prompt}, {"role": "user", "content": user_input}]
+                nl_response = self.groq.chat.completions.create(
+                    model=self.model,
+                    messages=nl_response_messages,
+                    stream=False,
+                    max_completion_tokens=4096
+                )
+                final_response = nl_response.choices[0].message.content
+                self.add_message("assistant", final_response)
+                yield {"type": "text", "response": final_response}
                 return
             selected_tool = next((tool for tool in self.tools if tool["function"]["name"] == chosen_tool_name), None)
             if not selected_tool:
-                yield {"type": "text", "response": f"[Tool '{chosen_tool_name}' not found in available tools.]"}
+                yield {"type": "text", "response": f"\[Tool '{chosen_tool_name}' not found in available tools.]"}
                 return
 
             # Prepare messages for the LLM, including all conversation history and tool outputs
@@ -438,13 +446,17 @@ class AIAgent:
                     arguments=function_args,
                     docker_token=os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
                 )
+            # Yield the output of the tool immediately
+            yield {"type": "tool", "tool": chosen_tool_name, "args": function_args, "output": tool_result}
+
             # Accumulate tool output
             tool_outputs.append({"tool": chosen_tool_name, "args": function_args, "output": tool_result})
             last_tool_output = tool_result
             # Add tool output to conversation history as assistant message
             self.add_message("assistant", f"Tool '{chosen_tool_name}' output: {tool_result}")
             # Prepare next input: user request + all tool outputs so far
-            current_input = f"User request: {user_input}\nPrevious tool outputs: {tool_result}"
+            all_tool_outputs = "\n".join([f"Tool: {o['tool']}, Args: {o['args']}, Output: {o['output']}" for o in tool_outputs])
+            current_input = f"User request: {user_input}\nPrevious tool outputs: {all_tool_outputs}"
             loop_count += 1
             # If the model should stop (e.g., no more tool calls), check in next loop
         # If max_loops reached, return last tool output
